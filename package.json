@@ -1,0 +1,53 @@
+{
+  "name": "guinda-time-tracking",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Time tracking and profitability analysis system for Guinda marketing agency",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "migrate:help": "node scripts/run-migrations.js",
+    "db:check": "node scripts/check-database.js",
+    "test:assignment": "node scripts/test-assignment.js",
+    "fix:view": "node scripts/fix-view.js"
+  },
+  "dependencies": {
+    "@radix-ui/react-alert-dialog": "^1.1.15",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@supabase/supabase-js": "^2.39.7",
+    "@tanstack/react-table": "^8.11.8",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.3.1",
+    "lucide-react": "^0.563.0",
+    "next": "14.2.16",
+    "next-themes": "^0.4.6",
+    "papaparse": "^5.5.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.12.0",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.4.0",
+    "tailwindcss-animate": "^1.0.7",
+    "uuid": "^13.0.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/uuid": "^10.0.0",
+    "autoprefixer": "^10.4.17",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.16",
+    "postcss": "^8",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
+  }
+}
