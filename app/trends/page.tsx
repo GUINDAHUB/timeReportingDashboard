@@ -54,13 +54,21 @@ export default function TrendsPage() {
             const today = new Date()
             const startDate = new Date(today.getFullYear(), today.getMonth() - monthsToShow + 1, 1)
             
-            // 3. Get all time entries in range
+            // 3. Get active employees with profile
+            const { data: employees } = await supabase
+                .from('employees')
+                .select('name')
+                .eq('is_active', true)
+            
+            const activeEmployeeNames = new Set(employees?.map(e => e.name) || [])
+            
+            // 4. Get all time entries in range
             const { data: entries } = await supabase
                 .from('time_entries')
-                .select('date, duration_hours, category_id, client_id')
+                .select('date, duration_hours, category_id, client_id, employee_name')
                 .gte('date', startDate.toISOString().split('T')[0])
 
-            // 4. Get all monthly goals in range
+            // 5. Get all monthly goals in range
             const startMonth = startDate.getMonth() + 1
             const startYear = startDate.getFullYear()
             
@@ -69,10 +77,13 @@ export default function TrendsPage() {
                 .select('month, year, fee, client_id')
                 .gte('year', startYear)
 
-            // 5. Get clients for trends table
+            // 6. Get clients for trends table
             const { data: clients } = await supabase
                 .from('clients')
                 .select('id, name')
+            
+            // Filter entries to only include employees with profile
+            const filteredEntries = entries?.filter(entry => activeEmployeeNames.has(entry.employee_name)) || []
 
             // Process data by month
             const monthsMap = new Map<string, MonthData>()
@@ -101,8 +112,8 @@ export default function TrendsPage() {
                 }
             })
 
-            // Aggregate hours and categories from entries
-            entries?.forEach(entry => {
+            // Aggregate hours and categories from entries (only employees with profile)
+            filteredEntries.forEach(entry => {
                 const date = new Date(entry.date)
                 const key = `${date.getFullYear()}-${date.getMonth() + 1}`
                 const monthData = monthsMap.get(key)
@@ -141,8 +152,8 @@ export default function TrendsPage() {
 
                 const clientTrendsMap = new Map()
 
-                // Get current month data by client
-                entries?.filter(e => {
+                // Get current month data by client (only employees with profile)
+                filteredEntries.filter(e => {
                     const date = new Date(e.date)
                     return date.getFullYear() === currentMonth.year && date.getMonth() + 1 === currentMonth.month
                 }).forEach(entry => {
@@ -159,8 +170,8 @@ export default function TrendsPage() {
                     clientTrendsMap.get(entry.client_id).currentHours += entry.duration_hours
                 })
 
-                // Get previous month data by client
-                entries?.filter(e => {
+                // Get previous month data by client (only employees with profile)
+                filteredEntries.filter(e => {
                     const date = new Date(e.date)
                     return date.getFullYear() === previousMonth.year && date.getMonth() + 1 === previousMonth.month
                 }).forEach(entry => {

@@ -32,6 +32,30 @@ export interface EmployeeMonthlyCost {
     updated_at: string
 }
 
+export interface ClientDirectCost {
+    id: string
+    client_id: string
+    month: number
+    year: number
+    amount: number
+    notes: string | null
+    created_at: string
+    updated_at: string
+}
+
+export type OperationalCostDistributionMethod = 'revenue' | 'workload'
+
+export interface MonthlyOperationalCost {
+    id: string
+    month: number
+    year: number
+    amount: number
+    distribution_method: OperationalCostDistributionMethod
+    notes: string | null
+    created_at: string
+    updated_at: string
+}
+
 export interface ClientMonthlyGoal {
     id: string
     client_id: string
@@ -155,6 +179,9 @@ export interface ClientProfitability {
     margin: number
     margin_percentage: number
     entry_count: number
+    direct_costs?: number // Gastos directos del cliente
+    gross_margin?: number // Margen Bruto = Ingresos - (Coste Personal + Gastos Directos)
+    gross_margin_percentage?: number
 }
 
 export interface CategoryDistribution {
@@ -229,12 +256,16 @@ export interface ImportSummary {
 }
 
 // Date filter types
-export type DateFilterMode = 'month' | 'ytd' | 'all'
+export type DateFilterMode = 'month' | 'range' | 'ytd' | 'all'
 
 export interface DateFilter {
     mode: DateFilterMode
-    month: number // 1-12
+    month: number // 1-12 (usado cuando mode === 'month')
     year: number
+    startMonth?: number // 1-12 (usado cuando mode === 'range')
+    startYear?: number
+    endMonth?: number // 1-12 (usado cuando mode === 'range')
+    endYear?: number
 }
 
 export interface DateRange {

@@ -47,10 +47,72 @@ export default function ImportPage() {
     const [creatingClients, setCreatingClients] = useState(false)
     const [history, setHistory] = useState<ImportHistory[]>([])
     const [deletingId, setDeletingId] = useState<string | null>(null)
+    const [distributionMethod, setDistributionMethod] = useState<'revenue' | 'workload'>('revenue')
+    const [savingDistribution, setSavingDistribution] = useState(false)
 
     useEffect(() => {
         loadImportHistory()
+        loadDistributionMethod()
     }, [])
+
+    async function loadDistributionMethod() {
+        // Get any operational cost settings to read distribution method
+        // We get the most recent one since they all should have the same method
+        const { data, error } = await supabase
+            .from('monthly_operational_costs')
+            .select('distribution_method')
+            .order('year', { ascending: false })
+            .order('month', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+        if (data && data.distribution_method) {
+            setDistributionMethod(data.distribution_method as 'revenue' | 'workload')
+        }
+    }
+
+    async function handleSaveDistributionMethod() {
+        setSavingDistribution(true)
+        try {
+            // Update all existing operational costs to use the new distribution method
+            const { data: existingCosts, error: fetchError } = await supabase
+                .from('monthly_operational_costs')
+                .select('id, month, year, amount, notes')
+
+            if (fetchError) throw fetchError
+
+            if (existingCosts && existingCosts.length > 0) {
+                // Update each record with the new distribution method
+                for (const cost of existingCosts) {
+                    const response = await fetch('/api/operational-costs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            month: cost.month,
+                            year: cost.year,
+                            amount: cost.amount,
+                            notes: cost.notes,
+                            distribution_method: distributionMethod
+                        })
+                    })
+
+                    if (!response.ok) throw new Error('Error updating distribution method')
+                }
+
+                toast.success(`Método de reparto actualizado a "${distributionMethod === 'revenue' ? 'Facturación' : 'Carga de Trabajo'}"`)
+                
+                // Recargar el método de distribución para confirmar el cambio
+                await loadDistributionMethod()
+            } else {
+                toast.info('No hay costes operativos configurados todavía')
+            }
+        } catch (error) {
+            console.error('Error saving distribution method:', error)
+            toast.error('Error al guardar el método de reparto')
+        } finally {
+            setSavingDistribution(false)
+        }
+    }
 
     async function loadImportHistory() {
         // Get grouped data by month/year
@@ -268,6 +330,75 @@ export default function ImportPage() {
                     <p className="text-sm text-gray-500 mt-4">
                         Archivos soportados: .csv (exportado desde ClickUp)
                     </p>
+                </div>
+
+                {/* Distribution Method Selector */}
+                <div className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-xl p-6">
+                    <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                            <h3 className="text-lg font-bold text-purple-900 mb-2">⚙️ Método de Reparto de Costes Operativos</h3>
+                            <p className="text-sm text-purple-800 mb-4">
+                                Los costes operativos de la empresa se distribuyen entre los clientes según el método seleccionado:
+                            </p>
+                            
+                            <div className="space-y-3">
+                                <label className="flex items-start p-3 bg-white rounded-lg border-2 transition-all cursor-pointer hover:shadow-md"
+                                    style={{
+                                        borderColor: distributionMethod === 'revenue' ? '#7c3aed' : '#e5e7eb'
+                                    }}>
+                                    <input
+                                        type="radio"
+                                        name="distribution"
+                                        value="revenue"
+                                        checked={distributionMethod === 'revenue'}
+                                        onChange={(e) => setDistributionMethod(e.target.value as 'revenue')}
+                                        className="mt-1 mr-3 w-4 h-4 text-purple-600"
+                                    />
+                                    <div>
+                                        <p className="font-semibold text-gray-900">💰 Reparto por Volumen de Facturación</p>
+                                        <p className="text-sm text-gray-600 mt-1">
+                                            Los costes se distribuyen proporcionalmente según la facturación de cada cliente. 
+                                            El cliente que más factura, asume mayor parte de los gastos fijos.
+                                        </p>
+                                    </div>
+                                </label>
+
+                                <label className="flex items-start p-3 bg-white rounded-lg border-2 transition-all cursor-pointer hover:shadow-md"
+                                    style={{
+                                        borderColor: distributionMethod === 'workload' ? '#7c3aed' : '#e5e7eb'
+                                    }}>
+                                    <input
+                                        type="radio"
+                                        name="distribution"
+                                        value="workload"
+                                        checked={distributionMethod === 'workload'}
+                                        onChange={(e) => setDistributionMethod(e.target.value as 'workload')}
+                                        className="mt-1 mr-3 w-4 h-4 text-purple-600"
+                                    />
+                                    <div>
+                                        <p className="font-semibold text-gray-900">⏱️ Reparto por Carga de Trabajo</p>
+                                        <p className="text-sm text-gray-600 mt-1">
+                                            Los costes se distribuyen proporcionalmente según las horas trabajadas en cada cliente.
+                                            El cliente que consume más tiempo del equipo, asume mayor parte de los gastos fijos.
+                                        </p>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center gap-3">
+                        <Button 
+                            onClick={handleSaveDistributionMethod}
+                            disabled={savingDistribution}
+                            className="bg-purple-600 hover:bg-purple-700 text-white"
+                        >
+                            {savingDistribution ? 'Guardando...' : '💾 Guardar Método de Reparto'}
+                        </Button>
+                        <p className="text-xs text-purple-700">
+                            Este cambio afecta a todos los meses con costes operativos configurados
+                        </p>
+                    </div>
                 </div>
 
                 {/* Success Result */}

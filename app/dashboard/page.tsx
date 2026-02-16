@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { formatCurrency, formatHours, formatNumber } from '@/lib/utils'
-import { TrendingUp, TrendingDown, Clock, DollarSign, Activity, Users, AlertTriangle } from 'lucide-react'
+import { TrendingUp, TrendingDown, Clock, DollarSign, Users, AlertTriangle, Settings } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { ProfitabilityTable } from '@/components/dashboard/profitability-table'
 import { EmployeeHoursProgress } from '@/components/dashboard/employee-hours-progress'
 import { EmployeeProfitabilityTable } from '@/components/dashboard/employee-profitability-table'
-import { MonthSelector } from '@/components/dashboard/month-selector'
+import { DateRangeSelector } from '@/components/dashboard/date-range-selector'
 import { useDateStore } from '@/lib/store/date-store'
 import { calculateClientCostsForMonth, calculateMonthlyMetrics, calculateEmployeeHoursProgress, calculateEmployeeProfitability } from '@/lib/services/employee-cost-calculator'
 
@@ -17,6 +18,13 @@ interface DashboardMetrics {
     totalHoursDeviation: number
     totalRealCost: number
     totalEstimatedCost: number
+    totalDirectCosts: number
+    totalCostsDirectTotal: number
+    totalOperationalCosts: number
+    totalGrossMargin: number
+    totalGrossMarginPercent: number
+    totalNetMargin: number
+    totalNetMarginPercent: number
     averageRealCostPerHour: number
     totalRealMargin: number
     totalRealMarginPercent: number
@@ -33,6 +41,13 @@ export default function DashboardPage() {
         totalHoursDeviation: 0,
         totalRealCost: 0,
         totalEstimatedCost: 0,
+        totalDirectCosts: 0,
+        totalCostsDirectTotal: 0,
+        totalOperationalCosts: 0,
+        totalGrossMargin: 0,
+        totalGrossMarginPercent: 0,
+        totalNetMargin: 0,
+        totalNetMarginPercent: 0,
         averageRealCostPerHour: 0,
         totalRealMargin: 0,
         totalRealMarginPercent: 0,
@@ -44,19 +59,25 @@ export default function DashboardPage() {
     const billingRate = 40 // Tarifa de facturación por hora
 
     // Use global date store
-    const { filter, setMonth, setYear } = useDateStore()
-    const { month, year } = filter
+    const { filter, setMonth, setYear, setDateRange, setMode } = useDateStore()
+    const { mode, month, year, startMonth, startYear, endMonth, endYear } = filter
 
     const loadDashboardData = async () => {
         setLoading(true)
 
         try {
-            // Use the new employee cost calculator
+            // Determinar el rango de fechas según el modo
+            const effectiveStartMonth = mode === 'range' && startMonth ? startMonth : month
+            const effectiveStartYear = mode === 'range' && startYear ? startYear : year
+            const effectiveEndMonth = mode === 'range' && endMonth ? endMonth : undefined
+            const effectiveEndYear = mode === 'range' && endYear ? endYear : undefined
+
+            // Use the new employee cost calculator with range support
             const [monthlyMetrics, clientCosts, employeeProgress, employeeProfitabilityData] = await Promise.all([
-                calculateMonthlyMetrics(month, year),
-                calculateClientCostsForMonth(month, year),
-                calculateEmployeeHoursProgress(month, year),
-                calculateEmployeeProfitability(month, year, billingRate)
+                calculateMonthlyMetrics(effectiveStartMonth, effectiveStartYear, effectiveEndMonth, effectiveEndYear),
+                calculateClientCostsForMonth(effectiveStartMonth, effectiveStartYear, billingRate, effectiveEndMonth, effectiveEndYear),
+                calculateEmployeeHoursProgress(effectiveStartMonth, effectiveStartYear, effectiveEndMonth, effectiveEndYear),
+                calculateEmployeeProfitability(effectiveStartMonth, effectiveStartYear, billingRate, effectiveEndMonth, effectiveEndYear)
             ])
 
             // Format client data for the table
@@ -70,6 +91,13 @@ export default function DashboardPage() {
                 hoursDeviationPercent: client.hours_deviation_percent,
                 realCost: client.real_cost,
                 estimatedCost: client.estimated_cost,
+                directCosts: client.direct_costs,
+                totalDirectCosts: client.total_direct_costs,
+                operationalCosts: client.operational_costs,
+                grossMargin: client.gross_margin,
+                grossMarginPercent: client.gross_margin_percent,
+                netMargin: client.net_margin,
+                netMarginPercent: client.net_margin_percent,
                 realMargin: client.real_margin,
                 realMarginPercent: client.real_margin_percent,
                 employeeBreakdown: client.employee_breakdown
@@ -92,7 +120,7 @@ export default function DashboardPage() {
     useEffect(() => {
         loadDashboardData()
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [month, year])
+    }, [mode, month, year, startMonth, startYear, endMonth, endYear])
 
     // Helper for trend color
     const getMarginColor = (margin: number) => {
@@ -108,18 +136,54 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-                        <p className="text-gray-600 mt-1">Vista general de rentabilidad mensual</p>
+                        <p className="text-gray-600 mt-1">
+                            {mode === 'range' && startMonth && endMonth
+                                ? 'Vista general de rentabilidad por rango'
+                                : 'Vista general de rentabilidad mensual'}
+                        </p>
                     </div>
 
-                    {/* Month Selector */}
-                    <MonthSelector
-                        month={month}
-                        year={year}
-                        onMonthChange={(newMonth, newYear) => {
-                            setMonth(newMonth)
-                            setYear(newYear)
-                        }}
-                    />
+                    <div className="flex items-center gap-3">
+                        {/* Date Range Selector */}
+                        <DateRangeSelector
+                            mode={mode === 'range' ? 'range' : 'month'}
+                            month={month}
+                            year={year}
+                            startMonth={startMonth}
+                            startYear={startYear}
+                            endMonth={endMonth}
+                            endYear={endYear}
+                            onMonthChange={(newMonth, newYear) => {
+                                setMonth(newMonth)
+                                setYear(newYear)
+                                setMode('month')
+                            }}
+                            onRangeChange={(newStartMonth, newStartYear, newEndMonth, newEndYear) => {
+                                setDateRange(newStartMonth, newStartYear, newEndMonth, newEndYear)
+                            }}
+                            onModeChange={(newMode) => {
+                                setMode(newMode)
+                            }}
+                        />
+                        
+                        {/* Navigate to Clients Management */}
+                        <Button 
+                            variant="outline"
+                            onClick={() => window.location.href = '/clients'}
+                            className="flex items-center gap-2"
+                        >
+                            <Settings className="w-4 h-4" />
+                            Gestionar Ingresos y Costes
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Info Banner */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-900">
+                        💡 <strong>Para editar ingresos y gastos directos</strong>, ve a la página de <a href="/clients" className="underline font-semibold">Gestión de Clientes & Costes</a>.
+                        Este dashboard es solo de visualización para mayor rapidez.
+                    </p>
                 </div>
 
                 {/* KPI Cards Row 1 */}
@@ -172,23 +236,23 @@ export default function DashboardPage() {
                         </p>
                     </div>
 
-                    {/* Real Margin */}
+                    {/* Net Margin */}
                     <div className="p-6 bg-white rounded-xl border shadow-sm">
                         <div className="flex items-center justify-between mb-2">
-                            <p className="text-sm font-medium text-gray-500">Margen Real</p>
-                            <div className={`p-2 rounded-lg ${metrics.totalRealMargin >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-                                {metrics.totalRealMargin >= 0 ? (
-                                    <TrendingUp className={`w-4 h-4 ${getMarginColor(metrics.totalRealMargin)}`} />
+                            <p className="text-sm font-medium text-gray-500">Margen Neto</p>
+                            <div className={`p-2 rounded-lg ${metrics.totalNetMargin >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                                {metrics.totalNetMargin >= 0 ? (
+                                    <TrendingUp className={`w-4 h-4 ${getMarginColor(metrics.totalNetMargin)}`} />
                                 ) : (
-                                    <TrendingDown className={`w-4 h-4 ${getMarginColor(metrics.totalRealMargin)}`} />
+                                    <TrendingDown className={`w-4 h-4 ${getMarginColor(metrics.totalNetMargin)}`} />
                                 )}
                             </div>
                         </div>
-                        <p className={`text-3xl font-bold ${getMarginColor(metrics.totalRealMargin)}`}>
-                            {loading ? '...' : formatCurrency(metrics.totalRealMargin)}
+                        <p className={`text-3xl font-bold ${getMarginColor(metrics.totalNetMargin)}`}>
+                            {loading ? '...' : formatCurrency(metrics.totalNetMargin)}
                         </p>
-                        <p className={`text-sm font-medium mt-1 ${getMarginColor(metrics.totalRealMargin)}`}>
-                            {metrics.totalRealMarginPercent.toFixed(1)}% de rentabilidad
+                        <p className={`text-sm font-medium mt-1 ${getMarginColor(metrics.totalNetMargin)}`}>
+                            {metrics.totalNetMarginPercent.toFixed(1)}% de rentabilidad
                         </p>
                     </div>
                 </div>
@@ -245,7 +309,9 @@ export default function DashboardPage() {
                             Cargando datos de rentabilidad...
                         </div>
                     ) : (
-                        <ProfitabilityTable data={metrics.clientData} />
+                        <ProfitabilityTable 
+                            data={metrics.clientData}
+                        />
                     )}
                 </div>
 

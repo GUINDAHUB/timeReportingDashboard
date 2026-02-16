@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase/client'
-import { Client, ClientMonthlyGoal } from '@/lib/types'
-import { getMonthName } from '@/lib/utils'
+import { Client, ClientMonthlyGoal, ClientDirectCost, MonthlyOperationalCost } from '@/lib/types'
+import { getMonthName, formatCurrency } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -25,19 +25,24 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { toast } from 'sonner'
 
 interface ClientRow {
     client: Client
     monthlyFees: Map<number, ClientMonthlyGoal> // month (1-12) -> goal
+    directCosts: Map<number, ClientDirectCost> // month (1-12) -> direct cost
 }
 
 export default function ClientsPage() {
     const [clientRows, setClientRows] = useState<ClientRow[]>([])
     const [loading, setLoading] = useState(true)
-    const [editingCell, setEditingCell] = useState<{ clientId: string; month: number } | null>(null)
+    const [editingCell, setEditingCell] = useState<{ clientId: string; month: number; type: 'fee' | 'cost' } | null>(null)
     const [editValue, setEditValue] = useState('')
     const [showAddDialog, setShowAddDialog] = useState(false)
     const [newClientName, setNewClientName] = useState('')
+    const [operationalCosts, setOperationalCosts] = useState<Map<number, MonthlyOperationalCost>>(new Map())
+    const [editingOpCost, setEditingOpCost] = useState<number | null>(null)
+    const [editOpCostValue, setEditOpCostValue] = useState('')
     const currentYear = new Date().getFullYear()
 
     const months = Array.from({ length: 12 }, (_, i) => i + 1)
@@ -72,9 +77,37 @@ export default function ClientsPage() {
             console.error('Error loading goals:', goalsError)
         }
 
+        // Load all direct costs for current year
+        const { data: costs, error: costsError } = await supabase
+            .from('client_direct_costs')
+            .select('*')
+            .eq('year', currentYear)
+
+        if (costsError) {
+            console.error('Error loading direct costs:', costsError)
+        }
+
+        // Load operational costs for current year
+        const { data: opCosts, error: opCostsError } = await supabase
+            .from('monthly_operational_costs')
+            .select('*')
+            .eq('year', currentYear)
+
+        if (opCostsError) {
+            console.error('Error loading operational costs:', opCostsError)
+        }
+
+        // Build operational costs map
+        const opCostsMap = new Map<number, MonthlyOperationalCost>()
+        opCosts?.forEach(cost => {
+            opCostsMap.set(cost.month, cost)
+        })
+        setOperationalCosts(opCostsMap)
+
         // Build rows
         const rows: ClientRow[] = (clients || []).map(client => {
             const monthlyFees = new Map<number, ClientMonthlyGoal>()
+            const directCosts = new Map<number, ClientDirectCost>()
 
             goals?.forEach(goal => {
                 if (goal.client_id === client.id) {
@@ -82,26 +115,42 @@ export default function ClientsPage() {
                 }
             })
 
-            return { client, monthlyFees }
+            costs?.forEach(cost => {
+                if (cost.client_id === client.id) {
+                    directCosts.set(cost.month, cost)
+                }
+            })
+
+            return { client, monthlyFees, directCosts }
         })
 
         setClientRows(rows)
         setLoading(false)
     }
 
-    async function handleCellClick(clientId: string, month: number) {
+    async function handleCellClick(clientId: string, month: number, type: 'fee' | 'cost') {
         const row = clientRows.find(r => r.client.id === clientId)
-        const currentFee = row?.monthlyFees.get(month)?.fee
+        const currentValue = type === 'fee' 
+            ? row?.monthlyFees.get(month)?.fee
+            : row?.directCosts.get(month)?.amount
 
-        setEditingCell({ clientId, month })
-        setEditValue(currentFee?.toString() || '')
+        setEditingCell({ clientId, month, type })
+        setEditValue(currentValue?.toString() || '')
     }
 
     async function handleCellSave() {
         if (!editingCell) return
 
-        const { clientId, month } = editingCell
+        const { clientId, month, type } = editingCell
 
+        if (type === 'fee') {
+            await saveFee(clientId, month)
+        } else {
+            await saveDirectCost(clientId, month)
+        }
+    }
+
+    async function saveFee(clientId: string, month: number) {
         // If empty or 0, delete the fee
         if (editValue.trim() === '' || parseFloat(editValue) === 0) {
             const row = clientRows.find(r => r.client.id === clientId)
@@ -115,9 +164,10 @@ export default function ClientsPage() {
 
                 if (error) {
                     console.error('Error deleting fee:', error)
-                    alert('Error al eliminar')
+                    toast.error('Error al eliminar')
                     return
                 }
+                toast.success('Ingreso eliminado')
             }
 
             setEditingCell(null)
@@ -128,7 +178,7 @@ export default function ClientsPage() {
         const newFee = parseFloat(editValue)
 
         if (isNaN(newFee) || newFee < 0) {
-            alert('Por favor ingresa un número válido')
+            toast.error('Por favor ingresa un número válido')
             return
         }
 
@@ -145,9 +195,10 @@ export default function ClientsPage() {
 
             if (error) {
                 console.error('Error updating fee:', error)
-                alert('Error al actualizar')
+                toast.error('Error al actualizar')
                 return
             }
+            toast.success('Ingreso actualizado')
         } else {
             // Insert new
             const { error } = await supabase
@@ -161,11 +212,63 @@ export default function ClientsPage() {
 
             if (error) {
                 console.error('Error inserting fee:', error)
-                alert('Error al crear')
+                toast.error('Error al crear')
                 return
             }
+            toast.success('Ingreso creado')
         }
 
+        setEditingCell(null)
+        loadData()
+    }
+
+    async function saveDirectCost(clientId: string, month: number) {
+        // If empty or 0, delete the cost
+        if (editValue.trim() === '' || parseFloat(editValue) === 0) {
+            const row = clientRows.find(r => r.client.id === clientId)
+            const existingCost = row?.directCosts.get(month)
+
+            if (existingCost) {
+                const response = await fetch(`/api/client-direct-costs?id=${existingCost.id}`, {
+                    method: 'DELETE'
+                })
+
+                if (!response.ok) {
+                    toast.error('Error al eliminar')
+                    return
+                }
+                toast.success('Gasto directo eliminado')
+            }
+
+            setEditingCell(null)
+            loadData()
+            return
+        }
+
+        const newAmount = parseFloat(editValue)
+
+        if (isNaN(newAmount) || newAmount < 0) {
+            toast.error('Por favor ingresa un número válido')
+            return
+        }
+
+        const response = await fetch('/api/client-direct-costs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                client_id: clientId,
+                month,
+                year: currentYear,
+                amount: newAmount
+            })
+        })
+
+        if (!response.ok) {
+            toast.error('Error al guardar')
+            return
+        }
+
+        toast.success('Gasto directo guardado')
         setEditingCell(null)
         loadData()
     }
@@ -243,8 +346,76 @@ export default function ClientsPage() {
         return goal ? goal.fee : null
     }
 
+    function getDirectCostForMonth(row: ClientRow, month: number): number | null {
+        const cost = row.directCosts.get(month)
+        return cost ? cost.amount : null
+    }
+
     function hasFee(row: ClientRow, month: number): boolean {
         return row.monthlyFees.has(month)
+    }
+
+    function hasDirectCost(row: ClientRow, month: number): boolean {
+        return row.directCosts.has(month)
+    }
+
+    async function handleOpCostClick(month: number) {
+        const currentCost = operationalCosts.get(month)?.amount
+        setEditingOpCost(month)
+        setEditOpCostValue(currentCost?.toString() || '')
+    }
+
+    async function handleOpCostSave() {
+        if (editingOpCost === null) return
+
+        const month = editingOpCost
+
+        // If empty or 0, delete
+        if (editOpCostValue.trim() === '' || parseFloat(editOpCostValue) === 0) {
+            const existingCost = operationalCosts.get(month)
+
+            if (existingCost) {
+                const response = await fetch(`/api/operational-costs?id=${existingCost.id}`, {
+                    method: 'DELETE'
+                })
+
+                if (!response.ok) {
+                    toast.error('Error al eliminar')
+                    return
+                }
+                toast.success('Gasto operativo eliminado')
+            }
+
+            setEditingOpCost(null)
+            loadData()
+            return
+        }
+
+        const newAmount = parseFloat(editOpCostValue)
+
+        if (isNaN(newAmount) || newAmount < 0) {
+            toast.error('Por favor ingresa un número válido')
+            return
+        }
+
+        const response = await fetch('/api/operational-costs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                month,
+                year: currentYear,
+                amount: newAmount
+            })
+        })
+
+        if (!response.ok) {
+            toast.error('Error al guardar')
+            return
+        }
+
+        toast.success('Gasto operativo guardado')
+        setEditingOpCost(null)
+        loadData()
     }
 
     if (loading) {
@@ -261,7 +432,7 @@ export default function ClientsPage() {
                 {/* Header */}
                 <div className="flex items-center justify-between">
                     <div>
-                        <h1 className="text-3xl font-bold text-gray-900">Gestión de Clientes</h1>
+                        <h1 className="text-3xl font-bold text-gray-900">Gestión de Clientes & Costes</h1>
                         <p className="text-gray-600 mt-1">
                             {clientRows.length} clientes • {currentYear}
                         </p>
@@ -272,12 +443,68 @@ export default function ClientsPage() {
                     </Button>
                 </div>
 
+                {/* Operational Costs Section */}
+                <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-5">
+                    <h2 className="text-lg font-bold text-amber-900 mb-3">💰 Gastos Operativos Generales por Mes</h2>
+                    <p className="text-sm text-amber-700 mb-4">
+                        Costes fijos de la empresa que no se asignan a un cliente específico. Haz clic en cada mes para editar.
+                    </p>
+                    
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                        {months.map(month => {
+                            const cost = operationalCosts.get(month)
+                            const hasCost = operationalCosts.has(month)
+                            const isEditing = editingOpCost === month
+
+                            return (
+                                <div key={month} className={`p-3 rounded-lg border-2 transition-all ${
+                                    hasCost ? 'bg-amber-100 border-amber-300' : 'bg-white border-amber-200'
+                                }`}>
+                                    <p className="text-xs font-medium text-amber-900 mb-1">
+                                        {getMonthName(month)}
+                                    </p>
+                                    {isEditing ? (
+                                        <Input
+                                            type="number"
+                                            value={editOpCostValue}
+                                            onChange={(e) => setEditOpCostValue(e.target.value)}
+                                            onBlur={handleOpCostSave}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') handleOpCostSave()
+                                                if (e.key === 'Escape') setEditingOpCost(null)
+                                            }}
+                                            className="w-full text-sm h-8"
+                                            placeholder="0 €"
+                                            autoFocus
+                                        />
+                                    ) : hasCost ? (
+                                        <button
+                                            onClick={() => handleOpCostClick(month)}
+                                            className="text-amber-900 font-bold hover:underline w-full text-left text-sm"
+                                        >
+                                            {formatCurrency(cost?.amount || 0)}
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={() => handleOpCostClick(month)}
+                                            className="text-amber-400 hover:text-amber-600 w-full text-left text-sm"
+                                        >
+                                            0 €
+                                        </button>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+
                 {/* Info */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <p className="text-sm text-blue-900">
-                        💡 <strong>Haz clic en cualquier celda</strong> para configurar el fee de ese mes.
-                        Las celdas con fee aparecen en <span className="font-bold text-blue-700">azul</span>.
-                        Para <strong>eliminar un fee</strong>, edita la celda y deja el campo vacío o escribe 0.
+                        💡 <strong>Haz clic en cualquier celda</strong> para editar.
+                        Las celdas con <span className="font-bold text-blue-700">Ingresos</span> aparecen en azul,
+                        las de <span className="font-bold text-purple-700">Gastos Directos</span> en morado.
+                        Para <strong>eliminar un valor</strong>, edita la celda y deja el campo vacío o escribe 0.
                     </p>
                 </div>
 
@@ -290,8 +517,13 @@ export default function ClientsPage() {
                                     Cliente
                                 </th>
                                 {months.map(month => (
-                                    <th key={month} className="px-4 py-3 text-center text-sm font-semibold text-gray-900 min-w-[120px]">
-                                        {getMonthName(month).slice(0, 3)}
+                                    <th key={month} className="px-2 py-3 text-center text-sm font-semibold text-gray-900 min-w-[140px]">
+                                        <div>{getMonthName(month).slice(0, 3)}</div>
+                                        <div className="flex gap-1 justify-center mt-1">
+                                            <span className="text-xs font-normal text-blue-700">Ing</span>
+                                            <span className="text-xs font-normal text-gray-400">|</span>
+                                            <span className="text-xs font-normal text-purple-700">Gas</span>
+                                        </div>
                                     </th>
                                 ))}
                                 <th className="px-4 py-3 text-center text-sm font-semibold text-gray-900 sticky right-0 bg-gray-50 z-10 min-w-[100px]">
@@ -307,46 +539,81 @@ export default function ClientsPage() {
                                     </td>
                                     {months.map(month => {
                                         const fee = getFeeForMonth(row, month)
-                                        const hasValue = hasFee(row, month)
-                                        const isEditing = editingCell?.clientId === row.client.id && editingCell?.month === month
+                                        const directCost = getDirectCostForMonth(row, month)
+                                        const hasFeeValue = hasFee(row, month)
+                                        const hasCostValue = hasDirectCost(row, month)
+                                        const isEditingFee = editingCell?.clientId === row.client.id && editingCell?.month === month && editingCell?.type === 'fee'
+                                        const isEditingCost = editingCell?.clientId === row.client.id && editingCell?.month === month && editingCell?.type === 'cost'
 
                                         return (
-                                            <td
-                                                key={month}
-                                                className={`px-2 py-2 text-center text-sm transition-colors ${hasValue
-                                                    ? 'bg-blue-50'
-                                                    : 'hover:bg-gray-100'
-                                                    }`}
-                                            >
-                                                {isEditing ? (
-                                                    <Input
-                                                        type="number"
-                                                        value={editValue}
-                                                        onChange={(e) => setEditValue(e.target.value)}
-                                                        onBlur={handleCellSave}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter') handleCellSave()
-                                                            if (e.key === 'Escape') setEditingCell(null)
-                                                        }}
-                                                        className="w-full text-sm h-8"
-                                                        placeholder="Fee €"
-                                                        autoFocus
-                                                    />
-                                                ) : hasValue ? (
-                                                    <button
-                                                        onClick={() => handleCellClick(row.client.id, month)}
-                                                        className="text-blue-900 font-semibold hover:underline w-full"
-                                                    >
-                                                        {fee?.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => handleCellClick(row.client.id, month)}
-                                                        className="text-gray-400 hover:text-gray-600 w-full"
-                                                    >
-                                                        —
-                                                    </button>
-                                                )}
+                                            <td key={month} className="px-2 py-2 text-center text-sm">
+                                                <div className="flex flex-col gap-1">
+                                                    {/* Fee (Ingreso) */}
+                                                    <div className={`transition-colors rounded px-1 ${hasFeeValue ? 'bg-blue-50' : 'hover:bg-gray-100'}`}>
+                                                        {isEditingFee ? (
+                                                            <Input
+                                                                type="number"
+                                                                value={editValue}
+                                                                onChange={(e) => setEditValue(e.target.value)}
+                                                                onBlur={handleCellSave}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') handleCellSave()
+                                                                    if (e.key === 'Escape') setEditingCell(null)
+                                                                }}
+                                                                className="w-full text-xs h-7"
+                                                                placeholder="Ing €"
+                                                                autoFocus
+                                                            />
+                                                        ) : hasFeeValue ? (
+                                                            <button
+                                                                onClick={() => handleCellClick(row.client.id, month, 'fee')}
+                                                                className="text-blue-900 font-semibold hover:underline w-full text-xs py-1"
+                                                            >
+                                                                {fee?.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => handleCellClick(row.client.id, month, 'fee')}
+                                                                className="text-gray-400 hover:text-gray-600 w-full text-xs py-1"
+                                                            >
+                                                                —
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Direct Cost (Gasto) */}
+                                                    <div className={`transition-colors rounded px-1 ${hasCostValue ? 'bg-purple-50' : 'hover:bg-gray-100'}`}>
+                                                        {isEditingCost ? (
+                                                            <Input
+                                                                type="number"
+                                                                value={editValue}
+                                                                onChange={(e) => setEditValue(e.target.value)}
+                                                                onBlur={handleCellSave}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') handleCellSave()
+                                                                    if (e.key === 'Escape') setEditingCell(null)
+                                                                }}
+                                                                className="w-full text-xs h-7"
+                                                                placeholder="Gas €"
+                                                                autoFocus
+                                                            />
+                                                        ) : hasCostValue ? (
+                                                            <button
+                                                                onClick={() => handleCellClick(row.client.id, month, 'cost')}
+                                                                className="text-purple-900 font-semibold hover:underline w-full text-xs py-1"
+                                                            >
+                                                                {directCost?.toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => handleCellClick(row.client.id, month, 'cost')}
+                                                                className="text-gray-400 hover:text-gray-600 w-full text-xs py-1"
+                                                            >
+                                                                —
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
                                             </td>
                                         )
                                     })}
@@ -354,7 +621,7 @@ export default function ClientsPage() {
                                         <AlertDialog>
                                             <AlertDialogTrigger asChild>
                                                 <Button variant="destructive" size="sm">
-                                                    🗑️ Eliminar
+                                                    🗑️
                                                 </Button>
                                             </AlertDialogTrigger>
                                             <AlertDialogContent>

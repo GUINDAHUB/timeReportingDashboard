@@ -8,6 +8,7 @@ import { FiltersPanel } from '@/components/categorization/filters-panel'
 import { CategoryDistributionChart } from '@/components/categorization/category-distribution-chart'
 import { EmployeeHoursChart } from '@/components/categorization/employee-hours-chart'
 import { ClientHoursChart } from '@/components/categorization/client-hours-chart'
+import { CategoryRankingCard } from '@/components/categorization/category-ranking-card'
 import { TasksDetailTable } from '@/components/categorization/tasks-detail-table'
 import { StatsCard } from '@/components/categorization/stats-card'
 
@@ -63,6 +64,16 @@ export default function CategorizationPage() {
             const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear
             const endDate = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-01`
 
+            // Fetch active employees with profile
+            const { data: employeesData, error: employeesError } = await supabase
+                .from('employees')
+                .select('name')
+                .eq('is_active', true)
+
+            if (employeesError) throw employeesError
+
+            const activeEmployeeNames = new Set(employeesData?.map(e => e.name) || [])
+
             // Fetch time entries
             const { data: entriesData, error: entriesError } = await supabase
                 .from('time_entries')
@@ -72,6 +83,9 @@ export default function CategorizationPage() {
                 .order('date', { ascending: false })
 
             if (entriesError) throw entriesError
+
+            // Filter entries to only include employees with profile
+            const filteredEntries = entriesData?.filter(entry => activeEmployeeNames.has(entry.employee_name)) || []
 
             // Fetch clients
             const { data: clientsData, error: clientsError } = await supabase
@@ -89,12 +103,12 @@ export default function CategorizationPage() {
 
             if (categoriesError) throw categoriesError
 
-            // Extract unique employees
+            // Extract unique employees (only those with profile)
             const uniqueEmployees = Array.from(
-                new Set(entriesData?.map(e => e.employee_name) || [])
+                new Set(filteredEntries.map(e => e.employee_name))
             ).sort()
 
-            setEntries(entriesData || [])
+            setEntries(filteredEntries)
             setClients(clientsData || [])
             setCategories(categoriesData || [])
             setEmployees(uniqueEmployees)
@@ -259,10 +273,22 @@ export default function CategorizationPage() {
                 </div>
 
                 {/* Charts */}
-                <div className="grid gap-6 lg:grid-cols-3">
-                    <CategoryDistributionChart data={categoryDistribution} />
-                    <EmployeeHoursChart data={employeeHours} />
-                    <ClientHoursChart data={clientHours} />
+                <div className="space-y-6">
+                    {/* Primera fila: Distribución por categoría - ancho completo */}
+                    <div className="grid gap-6 lg:grid-cols-3">
+                        <div className="lg:col-span-2">
+                            <CategoryDistributionChart data={categoryDistribution} />
+                        </div>
+                        <div className="lg:col-span-1">
+                            <CategoryRankingCard data={categoryDistribution} />
+                        </div>
+                    </div>
+
+                    {/* Segunda fila: Horas por persona y cliente */}
+                    <div className="grid gap-6 lg:grid-cols-2">
+                        <EmployeeHoursChart data={employeeHours} />
+                        <ClientHoursChart data={clientHours} />
+                    </div>
                 </div>
 
                 {/* Detailed Table */}

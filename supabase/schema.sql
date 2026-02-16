@@ -181,6 +181,60 @@ COMMENT ON COLUMN employees.hourly_cost IS 'Calculated as monthly_salary / month
 COMMENT ON COLUMN employee_monthly_costs.hourly_cost IS 'Calculated as monthly_salary / monthly_hours for this specific month';
 
 -- ============================================
+-- PROFITABILITY SYSTEM TABLES
+-- ============================================
+
+-- Create client_direct_costs table (variable costs per client/month)
+CREATE TABLE IF NOT EXISTS client_direct_costs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    month INTEGER NOT NULL CHECK (month >= 1 AND month <= 12),
+    year INTEGER NOT NULL CHECK (year >= 2000 AND year <= 2100),
+    amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(client_id, month, year)
+);
+
+-- Create monthly_operational_costs table (fixed costs per month)
+CREATE TABLE IF NOT EXISTS monthly_operational_costs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    month INTEGER NOT NULL CHECK (month >= 1 AND month <= 12),
+    year INTEGER NOT NULL CHECK (year >= 2000 AND year <= 2100),
+    amount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(month, year)
+);
+
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_client_direct_costs_client ON client_direct_costs(client_id);
+CREATE INDEX IF NOT EXISTS idx_client_direct_costs_period ON client_direct_costs(year DESC, month DESC);
+CREATE INDEX IF NOT EXISTS idx_client_direct_costs_client_period ON client_direct_costs(client_id, year DESC, month DESC);
+CREATE INDEX IF NOT EXISTS idx_monthly_operational_costs_period ON monthly_operational_costs(year DESC, month DESC);
+
+-- Create triggers for updated_at
+DROP TRIGGER IF EXISTS update_client_direct_costs_updated_at ON client_direct_costs;
+CREATE TRIGGER update_client_direct_costs_updated_at
+    BEFORE UPDATE ON client_direct_costs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_monthly_operational_costs_updated_at ON monthly_operational_costs;
+CREATE TRIGGER update_monthly_operational_costs_updated_at
+    BEFORE UPDATE ON monthly_operational_costs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Add comments
+COMMENT ON TABLE client_direct_costs IS 'Stores direct/variable costs specific to a client project in a given month';
+COMMENT ON TABLE monthly_operational_costs IS 'Stores fixed operational costs for the entire company per month';
+COMMENT ON COLUMN client_direct_costs.amount IS 'Direct cost amount in euros for this client in this month';
+COMMENT ON COLUMN monthly_operational_costs.amount IS 'Total operational costs for the company in this month';
+
+-- ============================================
 -- ROW LEVEL SECURITY (Future multi-tenancy)
 -- ============================================
 ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
@@ -190,6 +244,8 @@ ALTER TABLE keywords ENABLE ROW LEVEL SECURITY;
 ALTER TABLE time_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employees ENABLE ROW LEVEL SECURITY;
 ALTER TABLE employee_monthly_costs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_direct_costs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE monthly_operational_costs ENABLE ROW LEVEL SECURITY;
 
 -- For now, allow all operations (single tenant)
 -- TODO: Add org_id column and policies when multi-tenant
@@ -200,6 +256,8 @@ CREATE POLICY "Allow all for now" ON keywords FOR ALL USING (true);
 CREATE POLICY "Allow all for now" ON time_entries FOR ALL USING (true);
 CREATE POLICY "Allow all for now" ON employees FOR ALL USING (true);
 CREATE POLICY "Allow all for now" ON employee_monthly_costs FOR ALL USING (true);
+CREATE POLICY "Allow all for now" ON client_direct_costs FOR ALL USING (true);
+CREATE POLICY "Allow all for now" ON monthly_operational_costs FOR ALL USING (true);
 
 -- ============================================
 -- HELPER VIEWS

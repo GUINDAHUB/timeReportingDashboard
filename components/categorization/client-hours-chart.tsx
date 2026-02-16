@@ -40,7 +40,9 @@ export function ClientHoursChart({ data }: Props) {
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis 
                             dataKey="name"
-                            tick={{ fontSize: 11, angle: -45, textAnchor: 'end' }}
+                            angle={-45}
+                            textAnchor="end"
+                            tick={{ fontSize: 11 }}
                             height={100}
                             stroke="#6b7280"
                         />

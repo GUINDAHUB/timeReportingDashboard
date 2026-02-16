@@ -264,6 +264,16 @@ export async function getCategoryStats(categoryId: string): Promise<{
     employee_count: number
     date_range: { start: string; end: string } | null
 }> {
+    // Obtener empleados activos con perfil creado
+    const { data: employees, error: employeesError } = await supabase
+        .from('employees')
+        .select('name')
+        .eq('is_active', true)
+
+    if (employeesError) throw employeesError
+
+    const activeEmployeeNames = new Set(employees?.map(e => e.name) || [])
+
     const { data, error } = await supabase
         .from('time_entries')
         .select('duration_hours, employee_name, date')
@@ -271,7 +281,10 @@ export async function getCategoryStats(categoryId: string): Promise<{
 
     if (error) throw error
 
-    if (!data || data.length === 0) {
+    // Filtrar solo empleados con perfil creado
+    const filteredData = data?.filter(entry => activeEmployeeNames.has(entry.employee_name)) || []
+
+    if (filteredData.length === 0) {
         return {
             total_hours: 0,
             entry_count: 0,
@@ -280,13 +293,13 @@ export async function getCategoryStats(categoryId: string): Promise<{
         }
     }
 
-    const totalHours = data.reduce((sum, entry) => sum + entry.duration_hours, 0)
-    const uniqueEmployees = new Set(data.map(e => e.employee_name))
-    const dates = data.map(e => new Date(e.date)).sort((a, b) => a.getTime() - b.getTime())
+    const totalHours = filteredData.reduce((sum, entry) => sum + entry.duration_hours, 0)
+    const uniqueEmployees = new Set(filteredData.map(e => e.employee_name))
+    const dates = filteredData.map(e => new Date(e.date)).sort((a, b) => a.getTime() - b.getTime())
 
     return {
         total_hours: totalHours,
-        entry_count: data.length,
+        entry_count: filteredData.length,
         employee_count: uniqueEmployees.size,
         date_range: {
             start: dates[0].toISOString(),

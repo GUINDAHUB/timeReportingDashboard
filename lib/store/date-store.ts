@@ -8,6 +8,7 @@ interface DateStore {
     setMonth: (month: number) => void
     setYear: (year: number) => void
     setMode: (mode: DateFilterMode) => void
+    setDateRange: (startMonth: number, startYear: number, endMonth: number, endYear: number) => void
     getDateRange: () => DateRange
 }
 
@@ -38,9 +39,23 @@ export const useDateStore = create<DateStore>()(
                 }))
             },
 
+            setDateRange: (startMonth: number, startYear: number, endMonth: number, endYear: number) => {
+                set({
+                    filter: {
+                        mode: 'range',
+                        month: startMonth, // Mantener para compatibilidad
+                        year: startYear,
+                        startMonth,
+                        startYear,
+                        endMonth,
+                        endYear,
+                    },
+                })
+            },
+
             getDateRange: (): DateRange => {
                 const { filter } = get()
-                const { mode, month, year } = filter
+                const { mode, month, year, startMonth, startYear, endMonth, endYear } = filter
 
                 if (mode === 'all') {
                     return {
@@ -58,7 +73,16 @@ export const useDateStore = create<DateStore>()(
                     }
                 }
 
-                // mode === 'month'
+                if (mode === 'range' && startMonth && startYear && endMonth && endYear) {
+                    const rangeStart = startOfMonth(new Date(startYear, startMonth - 1, 1))
+                    const rangeEnd = endOfMonth(new Date(endYear, endMonth - 1, 1))
+                    return {
+                        start_date: format(rangeStart, 'yyyy-MM-dd'),
+                        end_date: format(rangeEnd, 'yyyy-MM-dd'),
+                    }
+                }
+
+                // mode === 'month' (default)
                 const monthStart = startOfMonth(new Date(year, month - 1, 1))
                 const monthEnd = endOfMonth(new Date(year, month - 1, 1))
 
