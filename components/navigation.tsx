@@ -1,10 +1,11 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useState, useRef, useEffect } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, LogOut } from 'lucide-react'
+import { toast } from 'sonner'
 
 const navItems = [
     { href: '/', label: 'Inicio', icon: '🏠' },
@@ -26,6 +27,30 @@ const navItems = [
 
 export function Navigation() {
     const pathname = usePathname()
+    const router = useRouter()
+    const [loggingOut, setLoggingOut] = useState(false)
+    
+    const handleLogout = async () => {
+        setLoggingOut(true)
+        try {
+            const response = await fetch('/api/auth/logout', {
+                method: 'POST',
+            })
+            
+            if (response.ok) {
+                toast.success('Sesión cerrada correctamente')
+                router.push('/login')
+                router.refresh()
+            } else {
+                toast.error('Error al cerrar sesión')
+            }
+        } catch (error) {
+            console.error('Logout error:', error)
+            toast.error('Error al cerrar sesión')
+        } finally {
+            setLoggingOut(false)
+        }
+    }
 
     return (
         <nav className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
@@ -71,6 +96,17 @@ export function Navigation() {
                                 </Link>
                             )
                         })}
+                        
+                        {/* Logout Button */}
+                        <button
+                            onClick={handleLogout}
+                            disabled={loggingOut}
+                            className="px-4 py-2 rounded-lg text-sm font-medium transition-all text-red-600 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 flex items-center gap-2"
+                            title="Cerrar sesión"
+                        >
+                            <LogOut className="w-4 h-4" />
+                            {loggingOut ? 'Saliendo...' : 'Salir'}
+                        </button>
                     </div>
                 </div>
             </div>

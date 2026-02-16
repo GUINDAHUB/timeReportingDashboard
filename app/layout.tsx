@@ -9,6 +9,19 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
     title: 'Guinda Time Tracking SO',
     description: 'Sistema de análisis de rentabilidad para agencia de marketing',
+    robots: {
+        index: false,
+        follow: false,
+        nocache: true,
+        googleBot: {
+            index: false,
+            follow: false,
+            noimageindex: true,
+            'max-video-preview': -1,
+            'max-image-preview': 'none',
+            'max-snippet': -1,
+        },
+    },
 }
 
 export default function RootLayout({

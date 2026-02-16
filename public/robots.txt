@@ -1,0 +1,39 @@
+# Deshabilitado completamente para prevenir indexación
+User-agent: *
+Disallow: /
+
+# Prevenir indexación de assets
+User-agent: *
+Disallow: /_next/
+Disallow: /api/
+
+# Block all common crawlers explicitly
+User-agent: Googlebot
+Disallow: /
+
+User-agent: Bingbot
+Disallow: /
+
+User-agent: Slurp
+Disallow: /
+
+User-agent: DuckDuckBot
+Disallow: /
+
+User-agent: Baiduspider
+Disallow: /
+
+User-agent: YandexBot
+Disallow: /
+
+User-agent: Sogou
+Disallow: /
+
+User-agent: Exabot
+Disallow: /
+
+User-agent: facebot
+Disallow: /
+
+User-agent: ia_archiver
+Disallow: /
