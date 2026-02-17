@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, memo } from 'react'
 import { Button } from '@/components/ui/button'
 import { 
     Select, 
@@ -26,6 +26,106 @@ interface TaskClassifierProps {
     onConfirm: (mappings: Record<number, string>) => void
     onCancel: () => void
 }
+
+// Memoized task row component for performance
+interface TaskRowProps {
+    entry: TaskEntry
+    isDiscarded: boolean
+    hasClient: boolean
+    isSelected: boolean
+    clientName: string | undefined
+    clients: Array<{ id: string; name: string }>
+    onToggleSelect: (id: number) => void
+    onToggleDiscard: (id: number) => void
+    onClientChange: (id: number, clientName: string) => void
+}
+
+const TaskRow = memo(function TaskRow({
+    entry,
+    isDiscarded,
+    hasClient,
+    isSelected,
+    clientName,
+    clients,
+    onToggleSelect,
+    onToggleDiscard,
+    onClientChange
+}: TaskRowProps) {
+    const formattedTime = useMemo(() => {
+        if (entry.startTime) {
+            return new Date(entry.startTime).toLocaleString('es-ES', { 
+                day: '2-digit', 
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            })
+        }
+        return entry.date
+    }, [entry.startTime, entry.date])
+
+    return (
+        <div 
+            className={`bg-white border rounded-lg p-2 ${
+                isDiscarded ? 'opacity-40 bg-gray-50 border-gray-300' : 
+                hasClient ? 'border-green-400 bg-green-50' : 
+                'border-gray-200'
+            }`}
+        >
+            <div className="flex items-center gap-2">
+                <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => onToggleSelect(entry.id)}
+                    className="w-4 h-4 text-purple-600 rounded flex-shrink-0"
+                    disabled={isDiscarded}
+                />
+                
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1.5">
+                        <span className={`font-medium text-sm flex-1 min-w-0 truncate ${isDiscarded ? 'line-through text-gray-500' : 'text-gray-900'}`}>
+                            {entry.taskName}
+                        </span>
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                            {formattedTime}
+                        </span>
+                        <span className="text-xs text-gray-600 font-mono whitespace-nowrap">{entry.durationHours.toFixed(1)}h</span>
+                        
+                        <label 
+                            className="flex items-center gap-1 cursor-pointer whitespace-nowrap flex-shrink-0"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <input
+                                type="checkbox"
+                                checked={isDiscarded}
+                                onChange={() => onToggleDiscard(entry.id)}
+                                className="w-3.5 h-3.5 text-red-600 rounded"
+                            />
+                            <span className="text-xs text-gray-600">✗</span>
+                        </label>
+                    </div>
+
+                    {!isDiscarded && (
+                        <Select
+                            value={clientName || ''}
+                            onValueChange={(value) => onClientChange(entry.id, value)}
+                        >
+                            <SelectTrigger className={`h-8 text-sm ${hasClient ? 'border-green-500 bg-white' : 'border-gray-300'}`}>
+                                <SelectValue placeholder="Cliente..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {clients.map(client => (
+                                    <SelectItem key={client.id} value={client.name}>
+                                        {client.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    )}
+                </div>
+            </div>
+        </div>
+    )
+})
 
 export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskClassifierProps) {
     // Initialize all entries with empty client selection
@@ -200,87 +300,20 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
 
             {/* Chronological Tasks List */}
             <div className="space-y-1.5 max-h-[70vh] overflow-y-auto">
-                {sortedEntries.map(entry => {
-                    const isDiscarded = discardedEntries.has(entry.id)
-                    const hasClient = !!clientMappings[entry.id]
-                    const isClassified = isDiscarded || hasClient
-
-                    return (
-                        <div 
-                            key={entry.id} 
-                            className={`bg-white border rounded-lg p-2 transition-colors ${
-                                isDiscarded ? 'opacity-40 bg-gray-50 border-gray-300' : 
-                                hasClient ? 'border-green-400 bg-green-50' : 
-                                'border-gray-200 hover:border-gray-300'
-                            }`}
-                        >
-                            <div className="flex items-center gap-2">
-                                {/* Checkbox for selection */}
-                                <input
-                                    type="checkbox"
-                                    checked={selectedEntries.has(entry.id)}
-                                    onChange={() => handleSelectEntry(entry.id)}
-                                    className="w-4 h-4 text-purple-600 rounded flex-shrink-0"
-                                    disabled={isDiscarded}
-                                />
-                                
-                                {/* Task info */}
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 mb-1.5">
-                                        <span className={`font-medium text-sm flex-1 min-w-0 truncate ${isDiscarded ? 'line-through text-gray-500' : 'text-gray-900'}`}>
-                                            {entry.taskName}
-                                        </span>
-                                        <span className="text-xs text-gray-500 whitespace-nowrap">
-                                            {entry.startTime 
-                                                ? new Date(entry.startTime).toLocaleString('es-ES', { 
-                                                    day: '2-digit', 
-                                                    month: '2-digit',
-                                                    hour: '2-digit',
-                                                    minute: '2-digit'
-                                                })
-                                                : entry.date
-                                            }
-                                        </span>
-                                        <span className="text-xs text-gray-600 font-mono whitespace-nowrap">{entry.durationHours.toFixed(1)}h</span>
-                                        
-                                        {/* Discard checkbox */}
-                                        <label 
-                                            className="flex items-center gap-1 cursor-pointer whitespace-nowrap flex-shrink-0"
-                                            onClick={(e) => e.stopPropagation()}
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={isDiscarded}
-                                                onChange={() => handleToggleDiscard(entry.id)}
-                                                className="w-3.5 h-3.5 text-red-600 rounded"
-                                            />
-                                            <span className="text-xs text-gray-600">✗</span>
-                                        </label>
-                                    </div>
-
-                                    {/* Client selector */}
-                                    {!isDiscarded && (
-                                        <Select
-                                            value={clientMappings[entry.id] || ''}
-                                            onValueChange={(value) => handleClientChange(entry.id, value)}
-                                        >
-                                            <SelectTrigger className={`h-8 text-sm ${hasClient ? 'border-green-500 bg-white' : 'border-gray-300'}`}>
-                                                <SelectValue placeholder="Cliente..." />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {clients.map(client => (
-                                                    <SelectItem key={client.id} value={client.name}>
-                                                        {client.name}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    )
-                })}
+                {sortedEntries.map(entry => (
+                    <TaskRow
+                        key={entry.id}
+                        entry={entry}
+                        isDiscarded={discardedEntries.has(entry.id)}
+                        hasClient={!!clientMappings[entry.id]}
+                        isSelected={selectedEntries.has(entry.id)}
+                        clientName={clientMappings[entry.id]}
+                        clients={clients}
+                        onToggleSelect={handleSelectEntry}
+                        onToggleDiscard={handleToggleDiscard}
+                        onClientChange={handleClientChange}
+                    />
+                ))}
             </div>
 
             {/* Compact Actions */}
