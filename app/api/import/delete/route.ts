@@ -8,23 +8,17 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 export async function DELETE(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url)
-        const month = parseInt(searchParams.get('month') || '')
-        const year = parseInt(searchParams.get('year') || '')
+        const batchId = searchParams.get('batchId')
 
-        if (!month || !year) {
-            return NextResponse.json({ error: 'Month and year are required' }, { status: 400 })
+        if (!batchId) {
+            return NextResponse.json({ error: 'Batch ID is required' }, { status: 400 })
         }
 
-        // Calculate dates
-        const startDate = `${year}-${month.toString().padStart(2, '0')}-01`
-        const endDate = `${year}-${(month + 1).toString().padStart(2, '0')}-01` // Works correctly for Dec -> Jan
-
-        // Delete entries for this month
+        // Delete entries for this import batch
         const { error, count } = await supabase
             .from('time_entries')
             .delete({ count: 'exact' })
-            .gte('date', startDate)
-            .lt('date', endDate)
+            .eq('import_batch_id', batchId)
 
         if (error) {
             return NextResponse.json({ error: error.message }, { status: 500 })
