@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { UncategorizedTaskSummary, CategoryHierarchical } from '@/lib/types'
 import { getUncategorizedTasks, assignCategoryToTask, bulkAssignCategories, learnFromAssignment } from '@/lib/services/uncategorized-tasks'
 import { getCategoriesTree } from '@/lib/services/categorizer'
-import { AlertCircle, CheckCircle, Filter, Search, Lightbulb } from 'lucide-react'
+import { AlertCircle, CheckCircle, Filter, Search, Lightbulb, RefreshCw } from 'lucide-react'
 
 export default function UncategorizedTasksPage() {
     const [tasks, setTasks] = useState<UncategorizedTaskSummary[]>([])
@@ -14,6 +14,18 @@ export default function UncategorizedTasksPage() {
     const [filterStatus, setFilterStatus] = useState<'pending' | 'reviewed' | 'ignored' | 'all'>('pending')
     const [searchTerm, setSearchTerm] = useState('')
     const [assigningBulk, setAssigningBulk] = useState(false)
+    const [isRecategorizing, setIsRecategorizing] = useState(false)
+    const [recategorizationResult, setRecategorizationResult] = useState<{
+        total_analyzed: number
+        recategorized: number
+        still_uncategorized: number
+        details: Array<{
+            task_name: string
+            old_category: string
+            new_category: string
+            keyword_matched: string
+        }>
+    } | null>(null)
 
     useEffect(() => {
         loadData()
@@ -95,6 +107,44 @@ export default function UncategorizedTasksPage() {
         }
     }
 
+    const handleRecategorize = async () => {
+        const confirmed = confirm(
+            '¿Volver a categorizar todas las tareas "Sin Clasificar" usando las keywords actuales?\n\n' +
+            'Esto aplicará las nuevas keywords que hayas añadido recientemente.'
+        )
+        if (!confirmed) return
+
+        setIsRecategorizing(true)
+        setRecategorizationResult(null)
+        
+        try {
+            const response = await fetch('/api/categorization/recategorize', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+
+            const data = await response.json()
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Error en la recategorización')
+            }
+
+            setRecategorizationResult(data.result)
+            
+            // Recargar datos
+            await loadData()
+            setSelectedTasks(new Set())
+        } catch (error: any) {
+            console.error('Error en recategorización:', error)
+            const errorMessage = error.message || 'Error desconocido'
+            alert(`❌ Error en recategorización:\n${errorMessage}\n\nRevisa la consola para más detalles.`)
+        } finally {
+            setIsRecategorizing(false)
+        }
+    }
+
     const toggleTaskSelection = (taskId: string) => {
         const newSelected = new Set(selectedTasks)
         if (newSelected.has(taskId)) {
@@ -145,6 +195,16 @@ export default function UncategorizedTasksPage() {
                                 Asigna categorías manualmente a tareas que no coincidieron con ninguna keyword
                             </p>
                         </div>
+                        <div>
+                            <button
+                                onClick={handleRecategorize}
+                                disabled={isRecategorizing || isLoading}
+                                className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                            >
+                                <RefreshCw className={`w-5 h-5 ${isRecategorizing ? 'animate-spin' : ''}`} />
+                                {isRecategorizing ? 'Recategorizando...' : 'Recategorizar'}
+                            </button>
+                        </div>
                     </div>
 
                     {/* Filters and search */}
@@ -175,6 +235,87 @@ export default function UncategorizedTasksPage() {
                     </div>
                 </div>
             </div>
+
+            {/* Recategorization results modal */}
+            {recategorizationResult && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+                        <div className="p-6 border-b">
+                            <h2 className="text-2xl font-bold">Resultados de Recategorización</h2>
+                        </div>
+                        <div className="p-6 overflow-y-auto flex-1">
+                            <div className="grid grid-cols-3 gap-4 mb-6">
+                                <div className="bg-blue-50 p-4 rounded-lg text-center">
+                                    <div className="text-3xl font-bold text-blue-600">
+                                        {recategorizationResult.total_analyzed}
+                                    </div>
+                                    <div className="text-sm text-gray-600 mt-1">Analizadas</div>
+                                </div>
+                                <div className="bg-green-50 p-4 rounded-lg text-center">
+                                    <div className="text-3xl font-bold text-green-600">
+                                        {recategorizationResult.recategorized}
+                                    </div>
+                                    <div className="text-sm text-gray-600 mt-1">Recategorizadas</div>
+                                </div>
+                                <div className="bg-orange-50 p-4 rounded-lg text-center">
+                                    <div className="text-3xl font-bold text-orange-600">
+                                        {recategorizationResult.still_uncategorized}
+                                    </div>
+                                    <div className="text-sm text-gray-600 mt-1">Sin categoría</div>
+                                </div>
+                            </div>
+
+                            {recategorizationResult.recategorized > 0 && (
+                                <div>
+                                    <h3 className="font-semibold mb-3 text-lg">Tareas Recategorizadas:</h3>
+                                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                                        {recategorizationResult.details.map((detail, index) => (
+                                            <div 
+                                                key={index}
+                                                className="p-3 bg-gray-50 rounded-lg border border-gray-200"
+                                            >
+                                                <div className="font-medium text-sm mb-1">{detail.task_name}</div>
+                                                <div className="flex items-center gap-2 text-xs text-gray-600">
+                                                    <span className="px-2 py-1 bg-gray-200 rounded">
+                                                        {detail.old_category}
+                                                    </span>
+                                                    <span>→</span>
+                                                    <span className="px-2 py-1 bg-green-100 text-green-700 rounded font-medium">
+                                                        {detail.new_category}
+                                                    </span>
+                                                    <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded ml-auto">
+                                                        keyword: "{detail.keyword_matched}"
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {recategorizationResult.recategorized === 0 && (
+                                <div className="text-center py-8">
+                                    <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                                    <p className="text-gray-600">
+                                        No se encontraron nuevas categorías para las tareas.
+                                    </p>
+                                    <p className="text-sm text-gray-500 mt-2">
+                                        Considera añadir más keywords en la configuración de categorías.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-6 border-t bg-gray-50">
+                            <button
+                                onClick={() => setRecategorizationResult(null)}
+                                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                            >
+                                Cerrar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Bulk actions bar */}
             {selectedTasks.size > 0 && (

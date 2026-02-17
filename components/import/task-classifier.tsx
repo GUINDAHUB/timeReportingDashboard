@@ -29,40 +29,41 @@ interface TaskClassifierProps {
 export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskClassifierProps) {
     // Initialize all entries with empty client selection
     const [clientMappings, setClientMappings] = useState<Record<number, string>>({})
+    const [discardedEntries, setDiscardedEntries] = useState<Set<number>>(new Set())
     const [bulkClient, setBulkClient] = useState<string>('')
     const [selectedEntries, setSelectedEntries] = useState<Set<number>>(new Set())
 
-    // Group entries by task name for easier classification
-    const groupedEntries = useMemo(() => {
-        const groups = new Map<string, TaskEntry[]>()
-        entries.forEach(entry => {
-            const taskName = entry.taskName.toLowerCase().trim()
-            if (!groups.has(taskName)) {
-                groups.set(taskName, [])
-            }
-            groups.get(taskName)!.push(entry)
+    // Sort entries chronologically
+    const sortedEntries = useMemo(() => {
+        return [...entries].sort((a, b) => {
+            return new Date(a.date).getTime() - new Date(b.date).getTime()
         })
-        return Array.from(groups.entries()).map(([taskName, entries]) => ({
-            taskName,
-            entries,
-            totalHours: entries.reduce((sum, e) => sum + e.durationHours, 0),
-            count: entries.length,
-        }))
     }, [entries])
 
     const handleClientChange = (entryId: number, clientName: string) => {
         setClientMappings(prev => ({ ...prev, [entryId]: clientName }))
+        // If assigning a client, remove from discarded
+        setDiscardedEntries(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(entryId)
+            return newSet
+        })
     }
 
-    const handleGroupClientChange = (groupTaskName: string, clientName: string) => {
-        const group = groupedEntries.find(g => g.taskName === groupTaskName)
-        if (!group) return
-
-        const newMappings = { ...clientMappings }
-        group.entries.forEach(entry => {
-            newMappings[entry.id] = clientName
-        })
-        setClientMappings(newMappings)
+    const handleToggleDiscard = (entryId: number) => {
+        const newDiscarded = new Set(discardedEntries)
+        if (newDiscarded.has(entryId)) {
+            newDiscarded.delete(entryId)
+        } else {
+            newDiscarded.add(entryId)
+            // If discarding, remove client mapping
+            setClientMappings(prev => {
+                const newMappings = { ...prev }
+                delete newMappings[entryId]
+                return newMappings
+            })
+        }
+        setDiscardedEntries(newDiscarded)
     }
 
     const handleSelectEntry = (entryId: number) => {
@@ -75,37 +76,56 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
         setSelectedEntries(newSelected)
     }
 
-    const handleSelectAllInGroup = (groupTaskName: string) => {
-        const group = groupedEntries.find(g => g.taskName === groupTaskName)
-        if (!group) return
-
-        const newSelected = new Set(selectedEntries)
-        const allSelected = group.entries.every(e => selectedEntries.has(e.id))
-
-        if (allSelected) {
-            // Deselect all
-            group.entries.forEach(e => newSelected.delete(e.id))
-        } else {
-            // Select all
-            group.entries.forEach(e => newSelected.add(e.id))
-        }
-        setSelectedEntries(newSelected)
-    }
-
     const handleBulkAssign = () => {
         if (!bulkClient || selectedEntries.size === 0) return
 
         const newMappings = { ...clientMappings }
+        const newDiscarded = new Set(discardedEntries)
+        
         selectedEntries.forEach(entryId => {
             newMappings[entryId] = bulkClient
+            // Remove from discarded if assigning client
+            newDiscarded.delete(entryId)
         })
+        
         setClientMappings(newMappings)
+        setDiscardedEntries(newDiscarded)
         setSelectedEntries(new Set())
         setBulkClient('')
     }
 
-    const unclassifiedCount = entries.filter(e => !clientMappings[e.id]).length
+    const handleBulkDiscard = () => {
+        if (selectedEntries.size === 0) return
+
+        const newDiscarded = new Set(discardedEntries)
+        const newMappings = { ...clientMappings }
+        
+        selectedEntries.forEach(entryId => {
+            newDiscarded.add(entryId)
+            // Remove client mapping if discarding
+            delete newMappings[entryId]
+        })
+        
+        setDiscardedEntries(newDiscarded)
+        setClientMappings(newMappings)
+        setSelectedEntries(new Set())
+    }
+
+    const unclassifiedCount = entries.filter(e => !clientMappings[e.id] && !discardedEntries.has(e.id)).length
+    const discardedCount = discardedEntries.size
+    const classifiedCount = Object.keys(clientMappings).length
     const canConfirm = unclassifiedCount === 0
+
+    const handleConfirm = () => {
+        // Filter out discarded entries from mappings
+        const finalMappings: Record<number, string> = {}
+        entries.forEach(entry => {
+            if (!discardedEntries.has(entry.id) && clientMappings[entry.id]) {
+                finalMappings[entry.id] = clientMappings[entry.id]
+            }
+        })
+        onConfirm(finalMappings)
+    }
 
     return (
         <div className="space-y-6">
@@ -115,21 +135,28 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
                     📋 Clasificar Tareas por Cliente
                 </h2>
                 <p className="text-purple-800">
-                    Asigna un cliente a cada tarea antes de guardar. Total: <strong>{entries.length} tareas</strong>
+                    Asigna un cliente a cada tarea o descártala. Total: <strong>{entries.length} tareas</strong>
                 </p>
-                <div className="mt-4 flex items-center gap-4">
-                    <div className="flex-1">
-                        <div className="text-sm text-purple-700">
-                            Sin clasificar: <strong className={unclassifiedCount > 0 ? 'text-red-600' : 'text-green-600'}>
-                                {unclassifiedCount}
-                            </strong>
-                        </div>
-                        <div className="w-full bg-purple-200 rounded-full h-2 mt-2">
-                            <div
-                                className="bg-green-500 h-2 rounded-full transition-all"
-                                style={{ width: `${((entries.length - unclassifiedCount) / entries.length) * 100}%` }}
-                            />
-                        </div>
+                <div className="mt-4 grid grid-cols-3 gap-4">
+                    <div className="bg-white p-3 rounded-lg border-2 border-green-200">
+                        <div className="text-sm text-green-700 font-medium">Con cliente</div>
+                        <div className="text-2xl font-bold text-green-600">{classifiedCount}</div>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg border-2 border-gray-200">
+                        <div className="text-sm text-gray-700 font-medium">Descartadas</div>
+                        <div className="text-2xl font-bold text-gray-600">{discardedCount}</div>
+                    </div>
+                    <div className="bg-white p-3 rounded-lg border-2 border-red-200">
+                        <div className="text-sm text-red-700 font-medium">Sin clasificar</div>
+                        <div className="text-2xl font-bold text-red-600">{unclassifiedCount}</div>
+                    </div>
+                </div>
+                <div className="mt-3">
+                    <div className="w-full bg-purple-200 rounded-full h-2">
+                        <div
+                            className="bg-green-500 h-2 rounded-full transition-all"
+                            style={{ width: `${((classifiedCount + discardedCount) / entries.length) * 100}%` }}
+                        />
                     </div>
                 </div>
             </div>
@@ -137,11 +164,12 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
             {/* Bulk Assignment */}
             {selectedEntries.size > 0 && (
                 <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-4">
-                    <div className="flex items-center gap-4">
+                    <p className="text-sm font-medium text-blue-900 mb-3">
+                        Acción masiva ({selectedEntries.size} seleccionadas)
+                    </p>
+                    <div className="flex items-end gap-3">
                         <div className="flex-1">
-                            <p className="text-sm font-medium text-blue-900 mb-2">
-                                Asignación masiva ({selectedEntries.size} seleccionadas)
-                            </p>
+                            <label className="text-xs text-blue-800 mb-1 block">Asignar cliente</label>
                             <Select value={bulkClient} onValueChange={setBulkClient}>
                                 <SelectTrigger className="bg-white">
                                     <SelectValue placeholder="Selecciona un cliente..." />
@@ -158,103 +186,100 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
                         <Button
                             onClick={handleBulkAssign}
                             disabled={!bulkClient}
-                            className="bg-blue-600 hover:bg-blue-700 mt-6"
+                            className="bg-blue-600 hover:bg-blue-700"
                         >
-                            Asignar a {selectedEntries.size} tareas
+                            ✓ Asignar
+                        </Button>
+                        <Button
+                            onClick={handleBulkDiscard}
+                            variant="outline"
+                            className="border-red-300 text-red-600 hover:bg-red-50"
+                        >
+                            ✗ Descartar {selectedEntries.size}
                         </Button>
                     </div>
                 </div>
             )}
 
-            {/* Grouped Tasks */}
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto">
-                {groupedEntries.map(group => {
-                    const allSelected = group.entries.every(e => selectedEntries.has(e.id))
-                    const someSelected = group.entries.some(e => selectedEntries.has(e.id))
-                    const allClassified = group.entries.every(e => clientMappings[e.id])
-                    const assignedClient = allClassified ? clientMappings[group.entries[0].id] : null
-                    const sameClient = assignedClient && group.entries.every(e => clientMappings[e.id] === assignedClient)
+            {/* Chronological Tasks List */}
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                {sortedEntries.map(entry => {
+                    const isDiscarded = discardedEntries.has(entry.id)
+                    const hasClient = !!clientMappings[entry.id]
+                    const isClassified = isDiscarded || hasClient
 
                     return (
-                        <div key={group.taskName} className="bg-white border-2 rounded-xl p-4 hover:shadow-md transition-shadow">
-                            {/* Group Header */}
-                            <div className="flex items-start gap-4 mb-3">
+                        <div 
+                            key={entry.id} 
+                            className={`bg-white border-2 rounded-lg p-3 hover:shadow-md transition-all ${
+                                isDiscarded ? 'opacity-50 bg-gray-50 border-gray-300' : 
+                                hasClient ? 'border-green-300 bg-green-50' : 
+                                'border-gray-200'
+                            }`}
+                        >
+                            <div className="flex items-start gap-3">
+                                {/* Checkbox for selection */}
                                 <input
                                     type="checkbox"
-                                    checked={allSelected}
-                                    ref={input => {
-                                        if (input) input.indeterminate = someSelected && !allSelected
-                                    }}
-                                    onChange={() => handleSelectAllInGroup(group.taskName)}
+                                    checked={selectedEntries.has(entry.id)}
+                                    onChange={() => handleSelectEntry(entry.id)}
                                     className="mt-1 w-5 h-5 text-purple-600 rounded"
+                                    disabled={isDiscarded}
                                 />
-                                <div className="flex-1">
-                                    <h3 className="font-bold text-gray-900 mb-1">
-                                        {group.entries[0].taskName}
-                                    </h3>
-                                    <div className="flex items-center gap-4 text-sm text-gray-600">
-                                        <span>📊 {group.count} {group.count === 1 ? 'entrada' : 'entradas'}</span>
-                                        <span>⏱️ {group.totalHours.toFixed(2)}h</span>
-                                        {sameClient && (
-                                            <span className="text-green-700 font-medium">
-                                                ✅ {assignedClient}
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="w-64">
-                                    <Select
-                                        value={sameClient ? assignedClient : ''}
-                                        onValueChange={(value) => handleGroupClientChange(group.taskName, value)}
-                                    >
-                                        <SelectTrigger className={sameClient ? 'border-green-500 bg-green-50' : 'border-gray-300'}>
-                                            <SelectValue placeholder="Selecciona cliente..." />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {clients.map(client => (
-                                                <SelectItem key={client.id} value={client.name}>
-                                                    {client.name}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                            </div>
-
-                            {/* Individual Entries (collapsed by default if all same client) */}
-                            {!sameClient && group.count > 1 && (
-                                <div className="ml-9 mt-3 space-y-2 border-l-2 border-gray-200 pl-4">
-                                    {group.entries.map(entry => (
-                                        <div key={entry.id} className="flex items-center gap-4 text-sm">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedEntries.has(entry.id)}
-                                                onChange={() => handleSelectEntry(entry.id)}
-                                                className="w-4 h-4 text-purple-600 rounded"
-                                            />
-                                            <span className="text-gray-600">{entry.date}</span>
-                                            <span className="text-gray-700">{entry.durationHours.toFixed(2)}h</span>
-                                            <div className="flex-1">
-                                                <Select
-                                                    value={clientMappings[entry.id] || ''}
-                                                    onValueChange={(value) => handleClientChange(entry.id, value)}
-                                                >
-                                                    <SelectTrigger className={clientMappings[entry.id] ? 'border-green-500 bg-green-50 h-8' : 'h-8'}>
-                                                        <SelectValue placeholder="Cliente..." />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {clients.map(client => (
-                                                            <SelectItem key={client.id} value={client.name}>
-                                                                {client.name}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
+                                
+                                {/* Task info */}
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-start justify-between gap-4 mb-2">
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className={`font-semibold text-gray-900 mb-1 ${isDiscarded ? 'line-through' : ''}`}>
+                                                {entry.taskName}
+                                            </h3>
+                                            <div className="flex items-center gap-3 text-sm text-gray-600">
+                                                <span>📅 {entry.date}</span>
+                                                <span>⏱️ {entry.durationHours.toFixed(2)}h</span>
                                             </div>
                                         </div>
-                                    ))}
+                                        
+                                        {/* Discard checkbox */}
+                                        <label className="flex items-center gap-2 cursor-pointer whitespace-nowrap">
+                                            <input
+                                                type="checkbox"
+                                                checked={isDiscarded}
+                                                onChange={() => handleToggleDiscard(entry.id)}
+                                                className="w-4 h-4 text-red-600 rounded"
+                                            />
+                                            <span className="text-sm text-gray-700">Descartar</span>
+                                        </label>
+                                    </div>
+
+                                    {/* Client selector */}
+                                    {!isDiscarded && (
+                                        <div className="w-full max-w-md">
+                                            <Select
+                                                value={clientMappings[entry.id] || ''}
+                                                onValueChange={(value) => handleClientChange(entry.id, value)}
+                                            >
+                                                <SelectTrigger className={hasClient ? 'border-green-500 bg-white' : 'border-gray-300'}>
+                                                    <SelectValue placeholder="Selecciona cliente..." />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {clients.map(client => (
+                                                        <SelectItem key={client.id} value={client.name}>
+                                                            {client.name}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    )}
+                                    
+                                    {isDiscarded && (
+                                        <div className="text-sm text-gray-500 italic">
+                                            Esta tarea no se guardará
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                            </div>
                         </div>
                     )
                 })}
@@ -270,11 +295,14 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
                     ❌ Cancelar
                 </Button>
                 <Button
-                    onClick={() => onConfirm(clientMappings)}
+                    onClick={handleConfirm}
                     disabled={!canConfirm}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white text-lg"
                 >
-                    {canConfirm ? '✅ Guardar y Finalizar' : `⚠️ Faltan ${unclassifiedCount} por clasificar`}
+                    {canConfirm 
+                        ? `✅ Guardar ${classifiedCount} ${classifiedCount === 1 ? 'tarea' : 'tareas'}` 
+                        : `⚠️ Faltan ${unclassifiedCount} por clasificar o descartar`
+                    }
                 </Button>
             </div>
         </div>
