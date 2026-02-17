@@ -244,38 +244,11 @@ export async function POST(request: NextRequest) {
             }, { status: 400 })
         }
 
-        // Check if data for this month already exists
+        // Get month/year for response
         const month = new Date(entries[0].date).getMonth() + 1
         const year = new Date(entries[0].date).getFullYear()
 
-        const { data: existingEntries } = await supabase
-            .from('time_entries')
-            .select('id')
-            .gte('date', `${year}-${month.toString().padStart(2, '0')}-01`)
-            .lt('date', `${year}-${(month + 1).toString().padStart(2, '0')}-01`)
-            .limit(1)
-
-        let replacedCount = 0
-
-        if (existingEntries && existingEntries.length > 0) {
-            // Delete existing entries for this month
-            const { error: deleteError, count } = await supabase
-                .from('time_entries')
-                .delete({ count: 'exact' })
-                .gte('date', `${year}-${month.toString().padStart(2, '0')}-01`)
-                .lt('date', `${year}-${(month + 1).toString().padStart(2, '0')}-01`)
-
-            if (deleteError) {
-                return NextResponse.json({
-                    error: 'Error deleting existing entries',
-                    details: deleteError
-                }, { status: 500 })
-            }
-
-            replacedCount = count || 0
-        }
-
-        // Insert new entries
+        // Insert new entries (they will be added to existing ones)
         const { error: insertError, data } = await supabase
             .from('time_entries')
             .insert(processedEntries)
@@ -296,7 +269,6 @@ export async function POST(request: NextRequest) {
                 validEntries: entries.length,
                 processedEntries: processedEntries.length,
                 insertedEntries: data?.length || 0,
-                replacedEntries: replacedCount,
                 unmappedClients: Array.from(unmappedClients),
                 dateRange,
                 month,

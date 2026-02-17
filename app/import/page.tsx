@@ -31,7 +31,6 @@ interface ImportStats {
     validEntries: number
     processedEntries: number
     insertedEntries: number
-    replacedEntries: number
     unmappedClients: string[]
     dateRange: { start: string; end: string }
     month: number
@@ -700,9 +699,6 @@ export default function ImportPage() {
                                 <p className="text-sm text-green-800"><strong>Entradas válidas:</strong> {result.validEntries}</p>
                                 <p className="text-sm text-green-800"><strong>Entradas procesadas:</strong> {result.processedEntries}</p>
                                 <p className="text-sm text-green-800"><strong>Insertadas:</strong> {result.insertedEntries}</p>
-                                {result.replacedEntries > 0 && (
-                                    <p className="text-sm text-green-800"><strong>Reemplazadas:</strong> {result.replacedEntries}</p>
-                                )}
                             </div>
                         </div>
 
