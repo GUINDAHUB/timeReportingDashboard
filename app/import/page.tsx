@@ -70,6 +70,10 @@ export default function ImportPage() {
     const [showClassifier, setShowClassifier] = useState(false)
     const [employees, setEmployees] = useState<string[]>([])
     const [loadingEmployees, setLoadingEmployees] = useState(false)
+    const [filterEmployee, setFilterEmployee] = useState<string>('all')
+    const [filterMonthYear, setFilterMonthYear] = useState<string>('all')
+    const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set())
+    const [deletingBulk, setDeletingBulk] = useState(false)
 
     useEffect(() => {
         loadImportHistory()
@@ -458,6 +462,97 @@ export default function ImportPage() {
         }
     }
 
+    async function handleBulkDelete() {
+        if (selectedBatches.size === 0) return
+
+        setDeletingBulk(true)
+        try {
+            let totalDeleted = 0
+            const batchIds = Array.from(selectedBatches)
+
+            for (const batchId of batchIds) {
+                const response = await fetch(`/api/import/delete?batchId=${batchId}`, {
+                    method: 'DELETE',
+                })
+
+                if (response.ok) {
+                    const data = await response.json()
+                    totalDeleted += data.count
+                }
+            }
+
+            toast.success(`Eliminadas ${selectedBatches.size} importaciones (${totalDeleted} registros)`)
+            setSelectedBatches(new Set())
+            loadImportHistory()
+        } catch (error) {
+            console.error('Error deleting:', error)
+            toast.error('Error al eliminar las importaciones')
+        } finally {
+            setDeletingBulk(false)
+        }
+    }
+
+    function toggleBatchSelection(batchId: string) {
+        const newSelected = new Set(selectedBatches)
+        if (newSelected.has(batchId)) {
+            newSelected.delete(batchId)
+        } else {
+            newSelected.add(batchId)
+        }
+        setSelectedBatches(newSelected)
+    }
+
+    function selectAllFiltered() {
+        const filtered = getFilteredHistory()
+        const newSelected = new Set<string>()
+        filtered.forEach(h => newSelected.add(h.batchId))
+        setSelectedBatches(newSelected)
+    }
+
+    function deselectAll() {
+        setSelectedBatches(new Set())
+    }
+
+    function getFilteredHistory() {
+        let filtered = history
+
+        // Filter by employee
+        if (filterEmployee !== 'all') {
+            filtered = filtered.filter(h => 
+                h.employeeName === filterEmployee || 
+                (filterEmployee === 'multiple' && h.employeeName?.includes('empleados'))
+            )
+        }
+
+        // Filter by month/year
+        if (filterMonthYear !== 'all') {
+            const [year, month] = filterMonthYear.split('-').map(Number)
+            filtered = filtered.filter(h => h.year === year && h.month === month)
+        }
+
+        return filtered
+    }
+
+    // Get unique month/year combinations
+    function getUniqueMonthYears() {
+        const monthYears = new Set<string>()
+        history.forEach(h => {
+            monthYears.add(`${h.year}-${h.month}`)
+        })
+        return Array.from(monthYears).sort().reverse()
+    }
+
+    // Get unique employees from history
+    function getHistoryEmployees() {
+        const employeeSet = new Set<string>()
+        history.forEach(h => {
+            if (h.employeeName && !h.employeeName.includes('empleados')) {
+                employeeSet.add(h.employeeName)
+            }
+        })
+        return Array.from(employeeSet).sort()
+    }
+
     function handleDrop(e: React.DragEvent) {
         e.preventDefault()
         setDragActive(false)
@@ -785,29 +880,135 @@ export default function ImportPage() {
                 {history.length > 0 && (
                     <div className="bg-white rounded-xl border shadow-sm p-6">
                         <h3 className="text-xl font-bold text-gray-900 mb-4">📅 Histórico de Importaciones</h3>
+                        
+                        {/* Filters */}
+                        <div className="grid md:grid-cols-3 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Filtrar por empleado
+                                </label>
+                                <Select value={filterEmployee} onValueChange={setFilterEmployee}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Todos" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">Todos los empleados</SelectItem>
+                                        <SelectItem value="multiple">Importaciones múltiples</SelectItem>
+                                        {getHistoryEmployees().map((emp) => (
+                                            <SelectItem key={emp} value={emp}>
+                                                {emp}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Filtrar por mes
+                                </label>
+                                <Select value={filterMonthYear} onValueChange={setFilterMonthYear}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Todos" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">Todos los meses</SelectItem>
+                                        {getUniqueMonthYears().map((my) => {
+                                            const [year, month] = my.split('-').map(Number)
+                                            return (
+                                                <SelectItem key={my} value={my}>
+                                                    {getMonthName(month)} {year}
+                                                </SelectItem>
+                                            )
+                                        })}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="flex items-end gap-2">
+                                <Button
+                                    onClick={selectAllFiltered}
+                                    variant="outline"
+                                    size="sm"
+                                    className="flex-1"
+                                    disabled={getFilteredHistory().length === 0}
+                                >
+                                    ☑️ Seleccionar {getFilteredHistory().length}
+                                </Button>
+                                {selectedBatches.size > 0 && (
+                                    <Button
+                                        onClick={deselectAll}
+                                        variant="outline"
+                                        size="sm"
+                                        className="flex-1"
+                                    >
+                                        ❌ Limpiar
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Bulk Delete Button */}
+                        {selectedBatches.size > 0 && (
+                            <div className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-center justify-between">
+                                <div>
+                                    <p className="font-bold text-red-900">
+                                        {selectedBatches.size} {selectedBatches.size === 1 ? 'importación seleccionada' : 'importaciones seleccionadas'}
+                                    </p>
+                                    <p className="text-sm text-red-700">
+                                        {getFilteredHistory().filter(h => selectedBatches.has(h.batchId)).reduce((sum, h) => sum + h.entriesCount, 0)} registros totales
+                                    </p>
+                                </div>
+                                <Button
+                                    onClick={handleBulkDelete}
+                                    disabled={deletingBulk}
+                                    className="bg-red-600 hover:bg-red-700 text-white"
+                                >
+                                    {deletingBulk ? '⏳ Eliminando...' : `🗑️ Eliminar ${selectedBatches.size}`}
+                                </Button>
+                            </div>
+                        )}
+
+                        {/* Results count */}
                         <p className="text-sm text-gray-600 mb-4">
-                            Cada importación se puede borrar individualmente sin afectar a las demás
+                            Mostrando {getFilteredHistory().length} de {history.length} importaciones
                         </p>
+
                         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {history.map((h) => (
-                                <div key={h.id} className="p-4 border-2 rounded-lg hover:bg-gray-50 flex flex-col justify-between h-full bg-white transition-all hover:shadow-md">
+                            {getFilteredHistory().map((h) => (
+                                <div 
+                                    key={h.id} 
+                                    className={`p-4 border-2 rounded-lg flex flex-col justify-between h-full bg-white transition-all hover:shadow-md ${
+                                        selectedBatches.has(h.batchId) ? 'ring-2 ring-blue-500 bg-blue-50 border-blue-300' : 'hover:bg-gray-50'
+                                    }`}
+                                >
                                     <div>
-                                        <div className="flex justify-between items-start mb-2">
-                                            <div>
-                                                <h4 className="font-bold text-lg text-gray-900">
-                                                    {getMonthName(h.month)} {h.year}
-                                                </h4>
-                                                {h.employeeName && (
-                                                    <p className="text-sm text-purple-700 font-medium mt-1">
-                                                        👤 {h.employeeName}
-                                                    </p>
-                                                )}
+                                        <div className="flex items-start gap-3 mb-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedBatches.has(h.batchId)}
+                                                onChange={() => toggleBatchSelection(h.batchId)}
+                                                className="mt-1 w-5 h-5 text-blue-600 rounded cursor-pointer"
+                                            />
+                                            <div className="flex-1">
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <h4 className="font-bold text-lg text-gray-900">
+                                                            {getMonthName(h.month)} {h.year}
+                                                        </h4>
+                                                        {h.employeeName && (
+                                                            <p className="text-sm text-purple-700 font-medium mt-1">
+                                                                👤 {h.employeeName}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full font-medium">
+                                                        {h.entriesCount} regs
+                                                    </span>
+                                                </div>
                                             </div>
-                                            <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full font-medium">
-                                                {h.entriesCount} regs
-                                            </span>
                                         </div>
-                                        <div className="space-y-1 mt-3">
+                                        <div className="ml-8 space-y-1">
                                             <p className="text-xs text-gray-600">
                                                 📅 {h.dateRange.start === h.dateRange.end 
                                                     ? h.dateRange.start 
@@ -828,7 +1029,7 @@ export default function ImportPage() {
                                         </div>
                                     </div>
 
-                                    <div className="flex gap-2 mt-auto pt-4">
+                                    <div className="flex gap-2 mt-auto pt-4 ml-8">
                                         <AlertDialog open={deletingId === h.id} onOpenChange={(open) => setDeletingId(open ? h.id : null)}>
                                             <AlertDialogTrigger asChild>
                                                 <Button variant="outline" size="sm" className="flex-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
