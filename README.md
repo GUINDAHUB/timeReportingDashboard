@@ -6,7 +6,8 @@ Sistema de análisis de rentabilidad para agencias de marketing. Importa datos d
 
 - 📊 **Dashboard Mensual**: KPIs en tiempo real, tabla de rentabilidad por cliente
 - 📈 **Análisis de Tendencias**: Gráficos de evolución de ingresos vs costes
-- 📤 **Importación CSV**: Carga masiva de datos desde ClickUp
+- 📤 **Importación Doble**: Carga desde ClickUp (.csv) o Google Calendar (.ics)
+- 🎯 **Clasificación Interactiva**: Asigna clientes a tareas antes de guardar (archivos .ics)
 - 🏢 **Gestión de Clientes**: Fees variables por mes, histórico completo
 - 🤖 **Categorización Automática**: Clasifica tareas por palabras clave
 - 💰 **Cálculos Financieros**: Márgenes, rentabilidad, KPIs avanzados
@@ -109,27 +110,55 @@ Basado en el flujo de trabajo de marketing:
 - 🔴 **Postproducción y Retrabajo**: Edición, diseño, correcciones
 - 🔵 **Operativa Diaria (Run)**: Copy, publicación, community management
 
-## 🔄 Importación de CSV
+## 🔄 Importación de Datos
 
-### Formato Esperado
+El sistema soporta dos tipos de importación:
 
-El sistema espera CSVs exportados desde ClickUp con estas columnas:
+### 📊 Importación desde ClickUp (.csv)
+
+**Formato esperado:**
 
 - `Username`: Nombre del empleado
 - `Task Name`: Nombre de la tarea
 - `Time Tracked`: Duración en milisegundos
-- `Start Text`: Fecha de inicio
+- `Start Text`: Fecha de inicio (formato: DD/MM/YYYY, HH:MM:SS AM/PM)
 - `Folder Name`: Cliente (preferido)
 - `List Name`: Cliente (fallback)
 - `Task ID`: ID de la tarea
 
-### Proceso de Importación
-
-1. Sube el CSV
-2. El sistema detecta el rango de fechas
-3. Mapea automáticamente los clientes
+**Proceso:**
+1. Exporta el CSV desde ClickUp (Time Tracking → Export → CSV)
+2. Sube el archivo en la página de importación
+3. El sistema mapea automáticamente los clientes
 4. Categoriza las tareas por keywords
 5. Inserta los registros en `time_entries`
+
+### 📅 Importación desde Google Calendar (.ics)
+
+**Casos de uso:** Para importar datos históricos cuando el equipo no usó ClickUp (ej: enero 2026)
+
+**Formato esperado:** Archivo .ics estándar de Google Calendar
+
+**Proceso:**
+1. Exporta el calendario desde Google Calendar (Configuración → Importar y exportar)
+2. Descomprime el .zip y selecciona el calendario del empleado
+3. Sube el archivo .ics en la página de importación
+4. Especifica el nombre del empleado
+5. Selecciona el mes y año a importar (filtra solo ese periodo)
+6. **Clasificación interactiva**: Se abre una pantalla para clasificar todas las tareas por cliente
+   - Las tareas se agrupan automáticamente por nombre
+   - Puedes asignar un cliente a todo el grupo de una vez
+   - Selección múltiple para asignación masiva
+   - Barra de progreso para ver cuántas faltan por clasificar
+7. Una vez clasificadas todas, se guardan en la base de datos
+
+**Ventajas:**
+- ✅ Solo necesitas el calendario exportado
+- ✅ Filtra automáticamente por mes/año
+- ✅ Clasificación visual e intuitiva antes de guardar
+- ✅ **Nunca habrá tareas sin cliente** (clasificación obligatoria)
+- ✅ Cada empleado clasifica sus propias tareas
+- ✅ Agrupación inteligente para clasificar más rápido
 
 ## 🛠️ Desarrollo
 

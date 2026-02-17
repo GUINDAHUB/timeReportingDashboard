@@ -16,6 +16,7 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { TaskClassifier } from '@/components/import/task-classifier'
 
 interface ImportStats {
     batchId: string
@@ -49,11 +50,35 @@ export default function ImportPage() {
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const [distributionMethod, setDistributionMethod] = useState<'revenue' | 'workload'>('revenue')
     const [savingDistribution, setSavingDistribution] = useState(false)
+    const [selectedFile, setSelectedFile] = useState<File | null>(null)
+    const [fileType, setFileType] = useState<'csv' | 'ics' | null>(null)
+    const [employeeName, setEmployeeName] = useState('')
+    const [filterMonth, setFilterMonth] = useState<number>(1) // Default to January
+    const [filterYear, setFilterYear] = useState<number>(2026)
+    const [classifyingEntries, setClassifyingEntries] = useState<any[]>([])
+    const [clients, setClients] = useState<Array<{ id: string; name: string }>>([])
+    const [showClassifier, setShowClassifier] = useState(false)
 
     useEffect(() => {
         loadImportHistory()
         loadDistributionMethod()
+        loadClients()
     }, [])
+
+    async function loadClients() {
+        const { data, error } = await supabase
+            .from('clients')
+            .select('id, name')
+            .eq('is_active', true)
+            .order('name')
+
+        if (error) {
+            console.error('Error loading clients:', error)
+            return
+        }
+
+        setClients(data || [])
+    }
 
     async function loadDistributionMethod() {
         // Get any operational cost settings to read distribution method
@@ -171,14 +196,50 @@ export default function ImportPage() {
         setHistory(historyArray)
     }
 
-    async function handleFile(file: File) {
+    function handleFileSelection(file: File) {
+        const fileName = file.name.toLowerCase()
+        const isCSV = fileName.endsWith('.csv')
+        const isICS = fileName.endsWith('.ics') || fileName.endsWith('.ical')
+
+        if (!isCSV && !isICS) {
+            setError('Solo se aceptan archivos .csv o .ics')
+            toast.error('Formato no válido')
+            return
+        }
+
+        setSelectedFile(file)
+        setFileType(isCSV ? 'csv' : 'ics')
+        setError(null)
+        setResult(null)
+        setUnmappedClients([])
+    }
+
+    async function handleUpload() {
+        if (!selectedFile) {
+            toast.error('Por favor selecciona un archivo')
+            return
+        }
+
+        // Validate ICS requirements
+        if (fileType === 'ics' && !employeeName.trim()) {
+            toast.error('Por favor ingresa el nombre del empleado')
+            return
+        }
+
         setUploading(true)
         setError(null)
         setResult(null)
         setUnmappedClients([])
 
         const formData = new FormData()
-        formData.append('file', file)
+        formData.append('file', selectedFile)
+
+        if (fileType === 'ics') {
+            formData.append('employeeName', employeeName.trim())
+            formData.append('filterMonth', filterMonth.toString())
+            formData.append('filterYear', filterYear.toString())
+            formData.append('previewMode', 'true') // Request preview for classification
+        }
 
         try {
             const response = await fetch('/api/import', {
@@ -189,30 +250,97 @@ export default function ImportPage() {
             const data = await response.json()
 
             if (!response.ok) {
-                // If it's a "No entries could be mapped" error, capture the list
                 if (data.unmappedClients && data.unmappedClients.length > 0) {
                     setUnmappedClients(data.unmappedClients)
-                    // Don't show generic error text if we have this specific case
-                    // or keep it but minimal
                 }
                 setError(data.error + (data.details ? ': ' + JSON.stringify(data.details) : ''))
-
                 toast.error('Error al importar archivo')
-            } else {
-                setResult(data.stats)
-                if (data.stats.unmappedClients.length > 0) {
-                    setUnmappedClients(data.stats.unmappedClients)
-                }
-                toast.success(`Importados ${data.stats.insertedEntries} registros correctamente`)
-                loadImportHistory() // Refresh history
+                setUploading(false)
+                return
             }
+
+            // If it's a preview response (ICS), show classifier
+            if (data.preview) {
+                setClassifyingEntries(data.entries)
+                setShowClassifier(true)
+                setUploading(false)
+                return
+            }
+
+            // Otherwise it's a direct import (CSV)
+            setResult(data.stats)
+            if (data.stats.unmappedClients.length > 0) {
+                setUnmappedClients(data.stats.unmappedClients)
+            }
+            toast.success(`Importados ${data.stats.insertedEntries} registros correctamente`)
+            loadImportHistory()
+            
+            // Reset form
+            setSelectedFile(null)
+            setFileType(null)
+            setEmployeeName('')
+            setUploading(false)
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Unknown error'
             setError('Error al procesar el archivo: ' + message)
             toast.error('Error: ' + message)
-        } finally {
             setUploading(false)
         }
+    }
+
+    async function handleConfirmClassification(clientMappings: Record<number, string>) {
+        if (!selectedFile) return
+
+        setUploading(true)
+        setShowClassifier(false)
+
+        const formData = new FormData()
+        formData.append('file', selectedFile)
+        formData.append('employeeName', employeeName.trim())
+        formData.append('filterMonth', filterMonth.toString())
+        formData.append('filterYear', filterYear.toString())
+        formData.append('previewMode', 'false')
+        formData.append('clientMappings', JSON.stringify(clientMappings))
+
+        try {
+            const response = await fetch('/api/import', {
+                method: 'POST',
+                body: formData,
+            })
+
+            const data = await response.json()
+
+            if (!response.ok) {
+                setError(data.error + (data.details ? ': ' + JSON.stringify(data.details) : ''))
+                toast.error('Error al guardar las entradas')
+                setUploading(false)
+                return
+            }
+
+            setResult(data.stats)
+            toast.success(`Guardadas ${data.stats.insertedEntries} entradas correctamente`)
+            loadImportHistory()
+
+            // Reset form
+            setSelectedFile(null)
+            setFileType(null)
+            setEmployeeName('')
+            setClassifyingEntries([])
+            setUploading(false)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Unknown error'
+            setError('Error al guardar: ' + message)
+            toast.error('Error: ' + message)
+            setUploading(false)
+        }
+    }
+
+    function handleCancelClassification() {
+        setShowClassifier(false)
+        setClassifyingEntries([])
+        setSelectedFile(null)
+        setFileType(null)
+        toast.info('Importación cancelada')
     }
 
     async function handleCreateMissingClients() {
@@ -266,23 +394,36 @@ export default function ImportPage() {
         setDragActive(false)
 
         const file = e.dataTransfer.files[0]
-        if (file && file.name.endsWith('.csv')) {
-            handleFile(file)
-        } else {
-            setError('Por favor sube un archivo CSV válido')
-            toast.error('Archivo no válido')
+        if (file) {
+            handleFileSelection(file)
         }
     }
 
     function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0]
         if (file) {
-            handleFile(file)
+            handleFileSelection(file)
         }
     }
 
     return (
         <div className="container mx-auto px-4 py-8">
+            {/* Show Classifier Modal */}
+            {showClassifier && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden shadow-2xl">
+                        <div className="p-6 overflow-y-auto max-h-[90vh]">
+                            <TaskClassifier
+                                entries={classifyingEntries}
+                                clients={clients}
+                                onConfirm={handleConfirmClassification}
+                                onCancel={handleCancelClassification}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="space-y-8">
                 {/* Header */}
                 <div>
@@ -303,34 +444,125 @@ export default function ImportPage() {
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={handleDrop}
                 >
-                    <div className="text-6xl mb-4">{uploading ? '⏳' : '📤'}</div>
+                    <div className="text-6xl mb-4">{uploading ? '⏳' : selectedFile ? '✅' : '📤'}</div>
                     <h3 className="text-xl font-bold text-gray-900 mb-2">
-                        {uploading ? 'Procesando CSV...' : 'Arrastra tu CSV aquí'}
+                        {uploading ? `Procesando ${fileType?.toUpperCase()}...` : selectedFile ? selectedFile.name : 'Arrastra tu archivo aquí'}
                     </h3>
                     <p className="text-gray-600 mb-6">
-                        {uploading ? 'Esto puede tardar unos segundos' : 'o haz clic para seleccionar un archivo'}
+                        {uploading ? 'Esto puede tardar unos segundos' : selectedFile ? `Archivo ${fileType?.toUpperCase()} seleccionado` : 'o haz clic para seleccionar un archivo'}
                     </p>
-                    {!uploading && (
+                    {!uploading && !selectedFile && (
                         <>
                             <input
                                 type="file"
-                                accept=".csv"
+                                accept=".csv,.ics,.ical"
                                 className="hidden"
-                                id="csv-upload"
+                                id="file-upload"
                                 onChange={handleFileSelect}
                             />
                             <label
-                                htmlFor="csv-upload"
+                                htmlFor="file-upload"
                                 className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors cursor-pointer"
                             >
-                                Seleccionar archivo CSV
+                                Seleccionar archivo
                             </label>
                         </>
                     )}
                     <p className="text-sm text-gray-500 mt-4">
-                        Archivos soportados: .csv (exportado desde ClickUp)
+                        Archivos soportados: .csv (ClickUp) o .ics (Google Calendar)
                     </p>
                 </div>
+
+                {/* ICS Configuration (shown when ICS file is selected) */}
+                {selectedFile && fileType === 'ics' && (
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6">
+                        <h3 className="text-lg font-bold text-blue-900 mb-4">📅 Configuración de Google Calendar</h3>
+                        
+                        <div className="space-y-4">
+                            {/* Employee Name */}
+                            <div>
+                                <label className="block text-sm font-medium text-blue-900 mb-2">
+                                    Nombre del Empleado *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={employeeName}
+                                    onChange={(e) => setEmployeeName(e.target.value)}
+                                    placeholder="Ej: María García"
+                                    className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    disabled={uploading}
+                                />
+                                <p className="text-xs text-blue-700 mt-1">
+                                    El nombre debe coincidir con el empleado en la base de datos
+                                </p>
+                            </div>
+
+                            {/* Month/Year Filter */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-blue-900 mb-2">
+                                        Mes a importar *
+                                    </label>
+                                    <select
+                                        value={filterMonth}
+                                        onChange={(e) => setFilterMonth(parseInt(e.target.value))}
+                                        className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        disabled={uploading}
+                                    >
+                                        {[
+                                            'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                                            'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+                                        ].map((month, idx) => (
+                                            <option key={idx} value={idx + 1}>{month}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-blue-900 mb-2">
+                                        Año *
+                                    </label>
+                                    <select
+                                        value={filterYear}
+                                        onChange={(e) => setFilterYear(parseInt(e.target.value))}
+                                        className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        disabled={uploading}
+                                    >
+                                        {[2024, 2025, 2026, 2027].map(year => (
+                                            <option key={year} value={year}>{year}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            <p className="text-sm text-blue-800 bg-blue-100 p-3 rounded-lg">
+                                ℹ️ Solo se importarán los eventos del mes y año seleccionado. Las tareas se asignarán a un cliente "Sin Clasificar" que podrás reasignar después.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                {/* Upload Button (shown when file is selected) */}
+                {selectedFile && !uploading && (
+                    <div className="flex gap-3">
+                        <Button
+                            onClick={handleUpload}
+                            className="flex-1 bg-green-600 hover:bg-green-700 text-white text-lg py-6"
+                        >
+                            ✅ Importar {fileType?.toUpperCase()}
+                        </Button>
+                        <Button
+                            onClick={() => {
+                                setSelectedFile(null)
+                                setFileType(null)
+                                setEmployeeName('')
+                            }}
+                            variant="outline"
+                            className="px-6 text-red-600 border-red-300 hover:bg-red-50"
+                        >
+                            ❌ Cancelar
+                        </Button>
+                    </div>
+                )}
 
                 {/* Distribution Method Selector */}
                 <div className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-xl p-6">
@@ -536,28 +768,63 @@ export default function ImportPage() {
                 )}
 
                 {/* Instructions */}
-                <div className="bg-white rounded-xl border shadow-sm p-6">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                        📋 Cómo exportar desde ClickUp
-                    </h3>
-                    <ol className="space-y-3 text-gray-700">
-                        <li className="flex items-start">
-                            <span className="font-bold text-blue-600 mr-3">1.</span>
-                            <span>Ve a <strong>Time Tracking</strong> en ClickUp</span>
-                        </li>
-                        <li className="flex items-start">
-                            <span className="font-bold text-blue-600 mr-3">2.</span>
-                            <span>Selecciona el rango de fechas del mes que quieres analizar</span>
-                        </li>
-                        <li className="flex items-start">
-                            <span className="font-bold text-blue-600 mr-3">3.</span>
-                            <span>Haz clic en <strong>Export</strong> → <strong>CSV</strong></span>
-                        </li>
-                        <li className="flex items-start">
-                            <span className="font-bold text-blue-600 mr-3">4.</span>
-                            <span>Sube el archivo descargado aquí</span>
-                        </li>
-                    </ol>
+                <div className="grid md:grid-cols-2 gap-6">
+                    {/* ClickUp Instructions */}
+                    <div className="bg-white rounded-xl border shadow-sm p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                            📋 Exportar desde ClickUp (.csv)
+                        </h3>
+                        <ol className="space-y-3 text-gray-700">
+                            <li className="flex items-start">
+                                <span className="font-bold text-blue-600 mr-3">1.</span>
+                                <span>Ve a <strong>Time Tracking</strong> en ClickUp</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="font-bold text-blue-600 mr-3">2.</span>
+                                <span>Selecciona el rango de fechas del mes que quieres analizar</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="font-bold text-blue-600 mr-3">3.</span>
+                                <span>Haz clic en <strong>Export</strong> → <strong>CSV</strong></span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="font-bold text-blue-600 mr-3">4.</span>
+                                <span>Sube el archivo descargado aquí</span>
+                            </li>
+                        </ol>
+                    </div>
+
+                    {/* Google Calendar Instructions */}
+                    <div className="bg-white rounded-xl border shadow-sm p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                            📅 Exportar desde Google Calendar (.ics)
+                        </h3>
+                        <ol className="space-y-3 text-gray-700">
+                            <li className="flex items-start">
+                                <span className="font-bold text-purple-600 mr-3">1.</span>
+                                <span>Ve a <strong>Google Calendar</strong> en tu navegador</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="font-bold text-purple-600 mr-3">2.</span>
+                                <span>Haz clic en <strong>Configuración ⚙️</strong> → <strong>Importar y exportar</strong></span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="font-bold text-purple-600 mr-3">3.</span>
+                                <span>En "Exportar", haz clic en <strong>Exportar</strong> para descargar todos tus calendarios</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="font-bold text-purple-600 mr-3">4.</span>
+                                <span>Descomprime el archivo .zip y busca el calendario del empleado (archivo .ics)</span>
+                            </li>
+                            <li className="flex items-start">
+                                <span className="font-bold text-purple-600 mr-3">5.</span>
+                                <span>Sube el archivo .ics aquí y selecciona el mes a importar</span>
+                            </li>
+                        </ol>
+                        <p className="text-xs text-purple-700 bg-purple-50 p-3 rounded mt-3">
+                            💡 <strong>Tip:</strong> Las tareas se asignarán a "Sin Clasificar". Luego podrás reasignarlas a los clientes correctos desde el dashboard.
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>

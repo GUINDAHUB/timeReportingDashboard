@@ -3,6 +3,13 @@ import { createClient } from '@supabase/supabase-js'
 import Papa from 'papaparse'
 import { v4 as uuidv4 } from 'uuid'
 import { categorizeTask, getDefaultCategoryId } from '@/lib/services/categorizer'
+import { 
+    parseICSFile, 
+    filterEventsByDateRange, 
+    convertICSToTimeEntries,
+    getEventsDateRange,
+    getMonthDateRange 
+} from '@/lib/services/ics-parser'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -29,38 +36,129 @@ export async function POST(request: NextRequest) {
     try {
         const formData = await request.formData()
         const file = formData.get('file') as File
+        const employeeName = formData.get('employeeName') as string | null
+        const filterMonth = formData.get('filterMonth') as string | null
+        const filterYear = formData.get('filterYear') as string | null
+        const previewMode = formData.get('previewMode') === 'true'
+        const clientMappings = formData.get('clientMappings') as string | null
 
         if (!file) {
             return NextResponse.json({ error: 'No file provided' }, { status: 400 })
         }
 
-        // Read file content
-        const text = await file.text()
+        // Detect file type
+        const isCSV = file.name.toLowerCase().endsWith('.csv')
+        const isICS = file.name.toLowerCase().endsWith('.ics') || file.name.toLowerCase().endsWith('.ical')
 
-        // Parse CSV
-        const parseResult = Papa.parse<CSVRow>(text, {
-            header: true,
-            skipEmptyLines: true,
-        })
-
-        if (parseResult.errors.length > 0) {
-            return NextResponse.json({
-                error: 'Error parsing CSV',
-                details: parseResult.errors
+        if (!isCSV && !isICS) {
+            return NextResponse.json({ 
+                error: 'Formato no soportado. Solo se aceptan archivos .csv o .ics' 
             }, { status: 400 })
         }
 
-        const rows = parseResult.data
+        // Read file content
+        const text = await file.text()
 
-        // Convert to parsed entries
-        const entries = convertCSVToTimeEntries(rows)
+        let entries: ParsedEntry[] = []
+        let totalRows = 0
+
+        if (isCSV) {
+            // Parse CSV
+            const parseResult = Papa.parse<CSVRow>(text, {
+                header: true,
+                skipEmptyLines: true,
+            })
+
+            if (parseResult.errors.length > 0) {
+                return NextResponse.json({
+                    error: 'Error parsing CSV',
+                    details: parseResult.errors
+                }, { status: 400 })
+            }
+
+            const rows = parseResult.data
+            totalRows = rows.length
+
+            // Convert to parsed entries
+            entries = convertCSVToTimeEntries(rows)
+        } else if (isICS) {
+            // Parse ICS
+            if (!employeeName) {
+                return NextResponse.json({
+                    error: 'Para archivos .ics es necesario especificar el nombre del empleado'
+                }, { status: 400 })
+            }
+
+            try {
+                const events = parseICSFile(text)
+                totalRows = events.length
+
+                // Filter by month/year if specified
+                let filteredEvents = events
+                if (filterMonth && filterYear) {
+                    const month = parseInt(filterMonth)
+                    const year = parseInt(filterYear)
+                    const { start, end } = getMonthDateRange(month, year)
+                    filteredEvents = filterEventsByDateRange(events, start, end)
+                }
+
+                // Convert to time entries with "Sin Clasificar" as default client
+                const parsedEntries = convertICSToTimeEntries(
+                    filteredEvents, 
+                    employeeName,
+                    'Sin Clasificar'
+                )
+
+                entries = parsedEntries.map(entry => ({
+                    taskName: entry.task_name,
+                    durationHours: entry.duration_hours,
+                    date: entry.date,
+                    employeeName: entry.employee_name,
+                    clientName: entry.client_name,
+                }))
+            } catch (error) {
+                return NextResponse.json({
+                    error: 'Error al parsear archivo .ics',
+                    details: error instanceof Error ? error.message : 'Unknown error'
+                }, { status: 400 })
+            }
+        }
 
         if (entries.length === 0) {
-            return NextResponse.json({ error: 'No valid entries found in CSV' }, { status: 400 })
+            return NextResponse.json({ error: 'No valid entries found' }, { status: 400 })
         }
 
         // Detect date range
         const dateRange = detectDateRange(entries)
+
+        // If preview mode for ICS, return entries for classification
+        if (previewMode && isICS) {
+            return NextResponse.json({
+                preview: true,
+                entries: entries.map((entry, index) => ({
+                    id: index,
+                    taskName: entry.taskName,
+                    durationHours: entry.durationHours,
+                    date: entry.date,
+                    employeeName: entry.employeeName,
+                    clientName: entry.clientName,
+                })),
+                totalEntries: entries.length,
+                dateRange,
+            })
+        }
+
+        // If client mappings provided (from classification step)
+        if (clientMappings && isICS) {
+            const mappings = JSON.parse(clientMappings) as Record<number, string>
+            
+            // Apply client mappings to entries
+            entries.forEach((entry, index) => {
+                if (mappings[index]) {
+                    entry.clientName = mappings[index]
+                }
+            })
+        }
 
         // Get clients for fuzzy matching
         const { data: clients } = await supabase
@@ -72,6 +170,27 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({
                 error: 'No active clients found. Please create clients first.'
             }, { status: 400 })
+        }
+
+        // Ensure "Sin Clasificar" client exists
+        let sinClasificarId = clients.find(c => c.name === 'Sin Clasificar')?.id
+        if (!sinClasificarId) {
+            // Create "Sin Clasificar" client
+            const { data: newClient, error: createError } = await supabase
+                .from('clients')
+                .insert({ name: 'Sin Clasificar', default_fee: 0, is_active: true })
+                .select()
+                .single()
+
+            if (createError || !newClient) {
+                return NextResponse.json({
+                    error: 'Error creating default "Sin Clasificar" client',
+                    details: createError
+                }, { status: 500 })
+            }
+
+            sinClasificarId = newClient.id
+            clients.push(newClient)
         }
 
         // Map client names
@@ -88,12 +207,20 @@ export async function POST(request: NextRequest) {
         const defaultCategoryId = await getDefaultCategoryId()
 
         for (const entry of entries) {
-            // Find client
-            const clientId = clientMap.get(entry.clientName.toLowerCase())
+            // Find client (use "Sin Clasificar" as fallback)
+            let clientId = clientMap.get(entry.clientName.toLowerCase())
 
             if (!clientId) {
-                unmappedClients.add(entry.clientName)
-                continue
+                // For ICS imports with "Sin Clasificar", use that client
+                if (entry.clientName === 'Sin Clasificar') {
+                    clientId = clientMap.get('sin clasificar')
+                }
+                
+                // If still not found, track as unmapped
+                if (!clientId) {
+                    unmappedClients.add(entry.clientName)
+                    continue
+                }
             }
 
             // Auto-categorize (strict mode: returns null if no keyword match)
@@ -165,7 +292,7 @@ export async function POST(request: NextRequest) {
             success: true,
             batchId,
             stats: {
-                totalRows: rows.length,
+                totalRows,
                 validEntries: entries.length,
                 processedEntries: processedEntries.length,
                 insertedEntries: data?.length || 0,
