@@ -6,6 +6,14 @@ import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatHours, getMonthName } from '@/lib/utils'
 import { ArrowLeft } from 'lucide-react'
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select'
+import { toast } from 'sonner'
 
 interface TimeEntry {
     id: string
@@ -25,6 +33,9 @@ export default function ImportCheckPage() {
 
     const [entries, setEntries] = useState<TimeEntry[]>([])
     const [loading, setLoading] = useState(true)
+    const [filterEmployee, setFilterEmployee] = useState<string>('all')
+    const [selectedEntries, setSelectedEntries] = useState<Set<string>>(new Set())
+    const [deleting, setDeleting] = useState(false)
 
     useEffect(() => {
         loadEntries()
@@ -59,7 +70,81 @@ export default function ImportCheckPage() {
         setLoading(false)
     }
 
-    const totalHours = entries.reduce((acc, curr) => acc + curr.duration_hours, 0)
+    function getUniqueEmployees(): string[] {
+        const employees = new Set<string>()
+        entries.forEach(entry => {
+            if (entry.employee_name) {
+                employees.add(entry.employee_name)
+            }
+        })
+        return Array.from(employees).sort()
+    }
+
+    function getFilteredEntries(): TimeEntry[] {
+        if (filterEmployee === 'all') {
+            return entries
+        }
+        return entries.filter(e => e.employee_name === filterEmployee)
+    }
+
+    function toggleEntrySelection(entryId: string) {
+        const newSelected = new Set(selectedEntries)
+        if (newSelected.has(entryId)) {
+            newSelected.delete(entryId)
+        } else {
+            newSelected.add(entryId)
+        }
+        setSelectedEntries(newSelected)
+    }
+
+    function selectAllFiltered() {
+        const filtered = getFilteredEntries()
+        const newSelected = new Set<string>()
+        filtered.forEach(e => newSelected.add(e.id))
+        setSelectedEntries(newSelected)
+    }
+
+    function deselectAll() {
+        setSelectedEntries(new Set())
+    }
+
+    async function handleBulkDelete() {
+        if (selectedEntries.size === 0) return
+
+        const confirmed = window.confirm(
+            `¿Estás seguro de que quieres eliminar ${selectedEntries.size} registros seleccionados?\n\nEsta acción no se puede deshacer.`
+        )
+
+        if (!confirmed) return
+
+        setDeleting(true)
+        try {
+            const entriesToDelete = Array.from(selectedEntries)
+
+            const { error } = await supabase
+                .from('time_entries')
+                .delete()
+                .in('id', entriesToDelete)
+
+            if (error) throw error
+
+            toast.success(`Eliminados ${selectedEntries.size} registros correctamente`)
+            setSelectedEntries(new Set())
+            loadEntries() // Reload data
+        } catch (error) {
+            console.error('Error deleting entries:', error)
+            toast.error('Error al eliminar los registros')
+        } finally {
+            setDeleting(false)
+        }
+    }
+
+    const filteredEntries = getFilteredEntries()
+    const totalHours = filteredEntries.reduce((acc, curr) => acc + curr.duration_hours, 0)
+    const selectedCount = selectedEntries.size
+    const selectedHours = entries
+        .filter(e => selectedEntries.has(e.id))
+        .reduce((acc, curr) => acc + curr.duration_hours, 0)
 
     return (
         <div className="container mx-auto px-4 py-8">
@@ -84,11 +169,84 @@ export default function ImportCheckPage() {
                 </div>
             </div>
 
+            {/* Filters and Bulk Actions */}
+            {!loading && entries.length > 0 && (
+                <div className="bg-white rounded-lg border shadow-sm p-4 mb-4">
+                    <div className="flex items-center justify-between gap-4">
+                        {/* Filter by employee */}
+                        <div className="flex items-center gap-4 flex-1">
+                            <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                                Filtrar por empleado:
+                            </label>
+                            <Select value={filterEmployee} onValueChange={setFilterEmployee}>
+                                <SelectTrigger className="w-64">
+                                    <SelectValue placeholder="Todos" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Todos los empleados</SelectItem>
+                                    {getUniqueEmployees().map((emp) => (
+                                        <SelectItem key={emp} value={emp}>
+                                            {emp}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <span className="text-sm text-gray-500">
+                                Mostrando {filteredEntries.length} de {entries.length} registros
+                            </span>
+                        </div>
+
+                        {/* Selection buttons */}
+                        <div className="flex items-center gap-2">
+                            <Button
+                                onClick={selectAllFiltered}
+                                variant="outline"
+                                size="sm"
+                                disabled={filteredEntries.length === 0}
+                            >
+                                ☑️ Seleccionar {filteredEntries.length}
+                            </Button>
+                            {selectedCount > 0 && (
+                                <Button
+                                    onClick={deselectAll}
+                                    variant="outline"
+                                    size="sm"
+                                >
+                                    ❌ Limpiar
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk delete banner */}
+            {selectedCount > 0 && (
+                <div className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-center justify-between">
+                    <div>
+                        <p className="font-bold text-red-900">
+                            {selectedCount} {selectedCount === 1 ? 'registro seleccionado' : 'registros seleccionados'}
+                        </p>
+                        <p className="text-sm text-red-700">
+                            {formatHours(selectedHours)} horas en total
+                        </p>
+                    </div>
+                    <Button
+                        onClick={handleBulkDelete}
+                        disabled={deleting}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                    >
+                        {deleting ? '⏳ Eliminando...' : `🗑️ Eliminar ${selectedCount}`}
+                    </Button>
+                </div>
+            )}
+
             <div className="bg-white rounded-lg border shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
                         <thead className="bg-gray-50 text-gray-700 font-semibold border-b">
                             <tr>
+                                <th className="px-4 py-3 w-12"></th>
                                 <th className="px-6 py-3">Fecha</th>
                                 <th className="px-6 py-3">Cliente</th>
                                 <th className="px-6 py-3">Tarea / Proyecto</th>
@@ -100,19 +258,34 @@ export default function ImportCheckPage() {
                         <tbody className="divide-y divide-gray-100">
                             {loading ? (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
+                                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
                                         Cargando registros...
                                     </td>
                                 </tr>
-                            ) : entries.length === 0 ? (
+                            ) : filteredEntries.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
-                                        No hay registros para este mes.
+                                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                                        {entries.length === 0 
+                                            ? 'No hay registros para este mes.' 
+                                            : 'No hay registros para el filtro seleccionado.'}
                                     </td>
                                 </tr>
                             ) : (
-                                entries.map((entry) => (
-                                    <tr key={entry.id} className="hover:bg-gray-50">
+                                filteredEntries.map((entry) => (
+                                    <tr 
+                                        key={entry.id} 
+                                        className={`hover:bg-gray-50 ${
+                                            selectedEntries.has(entry.id) ? 'bg-blue-50' : ''
+                                        }`}
+                                    >
+                                        <td className="px-4 py-3">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedEntries.has(entry.id)}
+                                                onChange={() => toggleEntrySelection(entry.id)}
+                                                className="w-4 h-4 text-blue-600 rounded cursor-pointer"
+                                            />
+                                        </td>
                                         <td className="px-6 py-3 whitespace-nowrap text-gray-600">
                                             {new Date(entry.date).toLocaleDateString('es-ES')}
                                         </td>
@@ -141,9 +314,9 @@ export default function ImportCheckPage() {
                 </div>
             </div>
 
-            {!loading && entries.length > 0 && (
+            {!loading && filteredEntries.length > 0 && (
                 <p className="text-center text-xs text-gray-400 mt-4">
-                    Mostrando {entries.length} registros
+                    Mostrando {filteredEntries.length} registros ({formatHours(totalHours)} horas)
                 </p>
             )}
         </div>

@@ -39,14 +39,11 @@ interface ImportStats {
 }
 
 interface ImportHistory {
-    id: string // batch_id
-    batchId: string
-    importDate: string
-    entriesCount: number
-    employeeName: string | null
+    id: string // composite key month-year
     month: number
     year: number
-    dateRange: { start: string; end: string }
+    importDate: string
+    entriesCount: number
 }
 
 export default function ImportPage() {
@@ -70,10 +67,6 @@ export default function ImportPage() {
     const [showClassifier, setShowClassifier] = useState(false)
     const [employees, setEmployees] = useState<string[]>([])
     const [loadingEmployees, setLoadingEmployees] = useState(false)
-    const [filterEmployee, setFilterEmployee] = useState<string>('all')
-    const [filterMonthYear, setFilterMonthYear] = useState<string>('all')
-    const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set())
-    const [deletingBulk, setDeletingBulk] = useState(false)
 
     useEffect(() => {
         loadImportHistory()
@@ -186,11 +179,11 @@ export default function ImportPage() {
     }
 
     async function loadImportHistory() {
-        // Get grouped data by import_batch_id
+        // Get grouped data by month/year
         const { data, error } = await supabase
             .from('time_entries')
-            .select('import_batch_id, date, created_at, employee_name')
-            .order('created_at', { ascending: false })
+            .select('date, created_at')
+            .order('date', { ascending: false })
 
         if (error) {
             console.error('Error loading history:', error)
@@ -202,69 +195,42 @@ export default function ImportPage() {
             return
         }
 
-        // Group by import_batch_id
-        const grouped = new Map<string, {
-            count: number
-            importDate: string
-            dates: string[]
-            employees: Set<string>
-        }>()
+        // Group by month/year
+        const grouped = new Map<string, { count: number; latestImport: string }>()
 
         data.forEach(entry => {
-            const batchId = entry.import_batch_id
+            const date = new Date(entry.date)
+            const key = `${date.getFullYear()}-${date.getMonth() + 1}`
 
-            if (!grouped.has(batchId)) {
-                grouped.set(batchId, {
-                    count: 0,
-                    importDate: entry.created_at,
-                    dates: [],
-                    employees: new Set()
-                })
+            if (!grouped.has(key)) {
+                grouped.set(key, { count: 0, latestImport: entry.created_at })
             }
 
-            const group = grouped.get(batchId)!
+            const group = grouped.get(key)!
             group.count++
-            group.dates.push(entry.date)
-            if (entry.employee_name) {
-                group.employees.add(entry.employee_name)
+
+            if (entry.created_at > group.latestImport) {
+                group.latestImport = entry.created_at
             }
         })
 
         // Convert to array
-        const historyArray: ImportHistory[] = Array.from(grouped.entries()).map(([batchId, value]) => {
-            // Sort dates to get range
-            const sortedDates = value.dates.sort()
-            const startDate = sortedDates[0]
-            const endDate = sortedDates[sortedDates.length - 1]
-            
-            // Get month/year from start date
-            const date = new Date(startDate)
-            const month = date.getMonth() + 1
-            const year = date.getFullYear()
-
-            // Get employee name (for ICS imports, single employee; for CSV, might be multiple)
-            const employeeName = value.employees.size === 1 
-                ? Array.from(value.employees)[0] 
-                : value.employees.size > 1 
-                    ? `${value.employees.size} empleados`
-                    : null
-
+        const historyArray: ImportHistory[] = Array.from(grouped.entries()).map(([key, value]) => {
+            const [year, month] = key.split('-').map(Number)
             return {
-                id: batchId,
-                batchId,
-                importDate: value.importDate,
-                entriesCount: value.count,
-                employeeName,
+                id: key,
                 month,
                 year,
-                dateRange: { start: startDate, end: endDate }
+                importDate: value.latestImport,
+                entriesCount: value.count,
             }
         })
 
-        // Sort by import date desc
-        historyArray.sort((a, b) => 
-            new Date(b.importDate).getTime() - new Date(a.importDate).getTime()
-        )
+        // Sort by year/month desc
+        historyArray.sort((a, b) => {
+            if (a.year !== b.year) return b.year - a.year
+            return b.month - a.month
+        })
 
         setHistory(historyArray)
     }
@@ -442,9 +408,9 @@ export default function ImportPage() {
         }
     }
 
-    async function handleDelete(batchId: string) {
+    async function handleDelete(month: number, year: number) {
         try {
-            const response = await fetch(`/api/import/delete?batchId=${batchId}`, {
+            const response = await fetch(`/api/import/delete?month=${month}&year=${year}`, {
                 method: 'DELETE',
             })
 
@@ -453,104 +419,13 @@ export default function ImportPage() {
             }
 
             const data = await response.json()
-            toast.success(`Eliminados ${data.count} registros de la importación`)
+            toast.success(`Eliminados ${data.count} registros de ${getMonthName(month)} ${year}`)
             setDeletingId(null)
             loadImportHistory()
         } catch (error) {
             console.error('Error deleting:', error)
             toast.error('Error al eliminar los registros')
         }
-    }
-
-    async function handleBulkDelete() {
-        if (selectedBatches.size === 0) return
-
-        setDeletingBulk(true)
-        try {
-            let totalDeleted = 0
-            const batchIds = Array.from(selectedBatches)
-
-            for (const batchId of batchIds) {
-                const response = await fetch(`/api/import/delete?batchId=${batchId}`, {
-                    method: 'DELETE',
-                })
-
-                if (response.ok) {
-                    const data = await response.json()
-                    totalDeleted += data.count
-                }
-            }
-
-            toast.success(`Eliminadas ${selectedBatches.size} importaciones (${totalDeleted} registros)`)
-            setSelectedBatches(new Set())
-            loadImportHistory()
-        } catch (error) {
-            console.error('Error deleting:', error)
-            toast.error('Error al eliminar las importaciones')
-        } finally {
-            setDeletingBulk(false)
-        }
-    }
-
-    function toggleBatchSelection(batchId: string) {
-        const newSelected = new Set(selectedBatches)
-        if (newSelected.has(batchId)) {
-            newSelected.delete(batchId)
-        } else {
-            newSelected.add(batchId)
-        }
-        setSelectedBatches(newSelected)
-    }
-
-    function selectAllFiltered() {
-        const filtered = getFilteredHistory()
-        const newSelected = new Set<string>()
-        filtered.forEach(h => newSelected.add(h.batchId))
-        setSelectedBatches(newSelected)
-    }
-
-    function deselectAll() {
-        setSelectedBatches(new Set())
-    }
-
-    function getFilteredHistory() {
-        let filtered = history
-
-        // Filter by employee
-        if (filterEmployee !== 'all') {
-            filtered = filtered.filter(h => 
-                h.employeeName === filterEmployee || 
-                (filterEmployee === 'multiple' && h.employeeName?.includes('empleados'))
-            )
-        }
-
-        // Filter by month/year
-        if (filterMonthYear !== 'all') {
-            const [year, month] = filterMonthYear.split('-').map(Number)
-            filtered = filtered.filter(h => h.year === year && h.month === month)
-        }
-
-        return filtered
-    }
-
-    // Get unique month/year combinations
-    function getUniqueMonthYears() {
-        const monthYears = new Set<string>()
-        history.forEach(h => {
-            monthYears.add(`${h.year}-${h.month}`)
-        })
-        return Array.from(monthYears).sort().reverse()
-    }
-
-    // Get unique employees from history
-    function getHistoryEmployees() {
-        const employeeSet = new Set<string>()
-        history.forEach(h => {
-            if (h.employeeName && !h.employeeName.includes('empleados')) {
-                employeeSet.add(h.employeeName)
-            }
-        })
-        return Array.from(employeeSet).sort()
     }
 
     function handleDrop(e: React.DragEvent) {
@@ -880,156 +755,39 @@ export default function ImportPage() {
                 {history.length > 0 && (
                     <div className="bg-white rounded-xl border shadow-sm p-6">
                         <h3 className="text-xl font-bold text-gray-900 mb-4">📅 Histórico de Importaciones</h3>
-                        
-                        {/* Filters */}
-                        <div className="grid md:grid-cols-3 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Filtrar por empleado
-                                </label>
-                                <Select value={filterEmployee} onValueChange={setFilterEmployee}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Todos" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">Todos los empleados</SelectItem>
-                                        <SelectItem value="multiple">Importaciones múltiples</SelectItem>
-                                        {getHistoryEmployees().map((emp) => (
-                                            <SelectItem key={emp} value={emp}>
-                                                {emp}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Filtrar por mes
-                                </label>
-                                <Select value={filterMonthYear} onValueChange={setFilterMonthYear}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Todos" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">Todos los meses</SelectItem>
-                                        {getUniqueMonthYears().map((my) => {
-                                            const [year, month] = my.split('-').map(Number)
-                                            return (
-                                                <SelectItem key={my} value={my}>
-                                                    {getMonthName(month)} {year}
-                                                </SelectItem>
-                                            )
-                                        })}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div className="flex items-end gap-2">
-                                <Button
-                                    onClick={selectAllFiltered}
-                                    variant="outline"
-                                    size="sm"
-                                    className="flex-1"
-                                    disabled={getFilteredHistory().length === 0}
-                                >
-                                    ☑️ Seleccionar {getFilteredHistory().length}
-                                </Button>
-                                {selectedBatches.size > 0 && (
-                                    <Button
-                                        onClick={deselectAll}
-                                        variant="outline"
-                                        size="sm"
-                                        className="flex-1"
-                                    >
-                                        ❌ Limpiar
-                                    </Button>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* Bulk Delete Button */}
-                        {selectedBatches.size > 0 && (
-                            <div className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-lg flex items-center justify-between">
-                                <div>
-                                    <p className="font-bold text-red-900">
-                                        {selectedBatches.size} {selectedBatches.size === 1 ? 'importación seleccionada' : 'importaciones seleccionadas'}
-                                    </p>
-                                    <p className="text-sm text-red-700">
-                                        {getFilteredHistory().filter(h => selectedBatches.has(h.batchId)).reduce((sum, h) => sum + h.entriesCount, 0)} registros totales
-                                    </p>
-                                </div>
-                                <Button
-                                    onClick={handleBulkDelete}
-                                    disabled={deletingBulk}
-                                    className="bg-red-600 hover:bg-red-700 text-white"
-                                >
-                                    {deletingBulk ? '⏳ Eliminando...' : `🗑️ Eliminar ${selectedBatches.size}`}
-                                </Button>
-                            </div>
-                        )}
-
-                        {/* Results count */}
-                        <p className="text-sm text-gray-600 mb-4">
-                            Mostrando {getFilteredHistory().length} de {history.length} importaciones
-                        </p>
-
                         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {getFilteredHistory().map((h) => (
-                                <div 
-                                    key={h.id} 
-                                    className={`p-4 border-2 rounded-lg flex flex-col justify-between h-full bg-white transition-all hover:shadow-md ${
-                                        selectedBatches.has(h.batchId) ? 'ring-2 ring-blue-500 bg-blue-50 border-blue-300' : 'hover:bg-gray-50'
-                                    }`}
-                                >
+                            {history.map((h) => (
+                                <div key={h.id} className="p-4 border rounded-lg hover:bg-gray-50 flex flex-col justify-between h-full bg-white transition-all hover:shadow-md">
                                     <div>
-                                        <div className="flex items-start gap-3 mb-2">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedBatches.has(h.batchId)}
-                                                onChange={() => toggleBatchSelection(h.batchId)}
-                                                className="mt-1 w-5 h-5 text-blue-600 rounded cursor-pointer"
-                                            />
-                                            <div className="flex-1">
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <h4 className="font-bold text-lg text-gray-900">
-                                                            {getMonthName(h.month)} {h.year}
-                                                        </h4>
-                                                        {h.employeeName && (
-                                                            <p className="text-sm text-purple-700 font-medium mt-1">
-                                                                👤 {h.employeeName}
-                                                            </p>
-                                                        )}
-                                                    </div>
-                                                    <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full font-medium">
-                                                        {h.entriesCount} regs
-                                                    </span>
-                                                </div>
-                                            </div>
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h4 className="font-bold text-lg text-gray-900">
+                                                {getMonthName(h.month)} {h.year}
+                                            </h4>
+                                            <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full font-medium">
+                                                {h.entriesCount} regs
+                                            </span>
                                         </div>
-                                        <div className="ml-8 space-y-1">
-                                            <p className="text-xs text-gray-600">
-                                                📅 {h.dateRange.start === h.dateRange.end 
-                                                    ? h.dateRange.start 
-                                                    : `${h.dateRange.start} → ${h.dateRange.end}`
-                                                }
-                                            </p>
-                                            <p className="text-xs text-gray-500">
-                                                🕐 Importado: {new Date(h.importDate).toLocaleDateString('es-ES', {
-                                                    day: 'numeric',
-                                                    month: 'short',
-                                                    hour: '2-digit',
-                                                    minute: '2-digit'
-                                                })}
-                                            </p>
-                                            <p className="text-xs text-gray-400 font-mono truncate" title={h.batchId}>
-                                                ID: {h.batchId.slice(0, 8)}...
-                                            </p>
-                                        </div>
+                                        <p className="text-xs text-gray-500 mt-1 mb-4">
+                                            Última importación: {new Date(h.importDate).toLocaleDateString('es-ES', {
+                                                year: 'numeric',
+                                                month: 'short',
+                                                day: 'numeric',
+                                                hour: '2-digit',
+                                                minute: '2-digit'
+                                            })}
+                                        </p>
                                     </div>
 
-                                    <div className="flex gap-2 mt-auto pt-4 ml-8">
+                                    <div className="flex gap-2 mt-auto pt-4">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="flex-1 border-blue-200 text-blue-700 hover:bg-blue-50"
+                                            onClick={() => window.location.href = `/import/history/${h.year}/${h.month}`}
+                                        >
+                                            👁️ Ver datos
+                                        </Button>
+
                                         <AlertDialog open={deletingId === h.id} onOpenChange={(open) => setDeletingId(open ? h.id : null)}>
                                             <AlertDialogTrigger asChild>
                                                 <Button variant="outline" size="sm" className="flex-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200">
@@ -1038,20 +796,16 @@ export default function ImportPage() {
                                             </AlertDialogTrigger>
                                             <AlertDialogContent>
                                                 <AlertDialogHeader>
-                                                    <AlertDialogTitle>¿Eliminar esta importación?</AlertDialogTitle>
+                                                    <AlertDialogTitle>¿Eliminar datos de {getMonthName(h.month)} {h.year}?</AlertDialogTitle>
                                                     <AlertDialogDescription>
-                                                        Estás a punto de eliminar <strong>{h.entriesCount} registros</strong>
-                                                        {h.employeeName && ` de ${h.employeeName}`} del periodo {h.dateRange.start} - {h.dateRange.end}.
-                                                        <br /><br />
-                                                        <strong>Solo se borrarán los datos de esta importación</strong>, no afectará a otras importaciones del mismo mes.
-                                                        <br /><br />
-                                                        Esta acción no se puede deshacer.
+                                                        Estás a punto de eliminar <strong>{h.entriesCount} registros</strong>.
+                                                        Esta acción no se puede deshacer. Tendrás que volver a importar el CSV si quieres recuperarlos.
                                                     </AlertDialogDescription>
                                                 </AlertDialogHeader>
                                                 <AlertDialogFooter>
                                                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
                                                     <AlertDialogAction
-                                                        onClick={() => handleDelete(h.batchId)}
+                                                        onClick={() => handleDelete(h.month, h.year)}
                                                         className="bg-red-600 hover:bg-red-700 text-white"
                                                     >
                                                         Eliminar definitivamente
