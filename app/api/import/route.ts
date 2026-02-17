@@ -30,6 +30,7 @@ interface ParsedEntry {
     date: string
     employeeName: string
     clientName: string
+    startTime?: string // Full timestamp for sorting (ICS only)
 }
 
 export async function POST(request: NextRequest) {
@@ -115,6 +116,7 @@ export async function POST(request: NextRequest) {
                     date: entry.date,
                     employeeName: entry.employee_name,
                     clientName: entry.client_name,
+                    startTime: (entry.raw_data as any)?.start || entry.date, // Include full timestamp for sorting
                 }))
             } catch (error) {
                 return NextResponse.json({
@@ -142,6 +144,7 @@ export async function POST(request: NextRequest) {
                     date: entry.date,
                     employeeName: entry.employeeName,
                     clientName: entry.clientName,
+                    startTime: entry.startTime, // Include for proper sorting
                 })),
                 totalEntries: entries.length,
                 dateRange,

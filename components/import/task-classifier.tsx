@@ -17,6 +17,7 @@ interface TaskEntry {
     date: string
     employeeName: string
     clientName: string
+    startTime?: string // Full timestamp for sorting
 }
 
 interface TaskClassifierProps {
@@ -33,10 +34,13 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
     const [bulkClient, setBulkClient] = useState<string>('')
     const [selectedEntries, setSelectedEntries] = useState<Set<number>>(new Set())
 
-    // Sort entries chronologically
+    // Sort entries chronologically (by date and time)
     const sortedEntries = useMemo(() => {
         return [...entries].sort((a, b) => {
-            return new Date(a.date).getTime() - new Date(b.date).getTime()
+            // Use startTime if available (includes hour), otherwise use date
+            const timeA = a.startTime ? new Date(a.startTime).getTime() : new Date(a.date).getTime()
+            const timeB = b.startTime ? new Date(b.startTime).getTime() : new Date(b.date).getTime()
+            return timeA - timeB
         })
     }, [entries])
 
@@ -226,7 +230,17 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
                                         <span className={`font-medium text-sm flex-1 min-w-0 truncate ${isDiscarded ? 'line-through text-gray-500' : 'text-gray-900'}`}>
                                             {entry.taskName}
                                         </span>
-                                        <span className="text-xs text-gray-500 whitespace-nowrap">{entry.date}</span>
+                                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                                            {entry.startTime 
+                                                ? new Date(entry.startTime).toLocaleString('es-ES', { 
+                                                    day: '2-digit', 
+                                                    month: '2-digit',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                })
+                                                : entry.date
+                                            }
+                                        </span>
                                         <span className="text-xs text-gray-600 font-mono whitespace-nowrap">{entry.durationHours.toFixed(1)}h</span>
                                         
                                         {/* Discard checkbox */}
