@@ -152,7 +152,10 @@ export async function POST(request: NextRequest) {
         if (clientMappings && isICS) {
             const mappings = JSON.parse(clientMappings) as Record<number, string>
             
-            // Apply client mappings to entries
+            // Filter entries to only include those with mappings (discard those without)
+            entries = entries.filter((entry, index) => mappings[index] !== undefined)
+            
+            // Apply client mappings to remaining entries
             entries.forEach((entry, index) => {
                 if (mappings[index]) {
                     entry.clientName = mappings[index]

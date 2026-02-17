@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { 
     Select, 
@@ -40,7 +40,7 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
         })
     }, [entries])
 
-    const handleClientChange = (entryId: number, clientName: string) => {
+    const handleClientChange = useCallback((entryId: number, clientName: string) => {
         setClientMappings(prev => ({ ...prev, [entryId]: clientName }))
         // If assigning a client, remove from discarded
         setDiscardedEntries(prev => {
@@ -48,33 +48,39 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
             newSet.delete(entryId)
             return newSet
         })
-    }
+    }, [])
 
-    const handleToggleDiscard = (entryId: number) => {
-        const newDiscarded = new Set(discardedEntries)
-        if (newDiscarded.has(entryId)) {
-            newDiscarded.delete(entryId)
-        } else {
-            newDiscarded.add(entryId)
-            // If discarding, remove client mapping
-            setClientMappings(prev => {
-                const newMappings = { ...prev }
-                delete newMappings[entryId]
-                return newMappings
-            })
-        }
-        setDiscardedEntries(newDiscarded)
-    }
+    const handleToggleDiscard = useCallback((entryId: number) => {
+        setDiscardedEntries(prev => {
+            const newDiscarded = new Set(prev)
+            const wasDiscarded = newDiscarded.has(entryId)
+            
+            if (wasDiscarded) {
+                newDiscarded.delete(entryId)
+            } else {
+                newDiscarded.add(entryId)
+                // If discarding, remove client mapping
+                setClientMappings(prevMappings => {
+                    const newMappings = { ...prevMappings }
+                    delete newMappings[entryId]
+                    return newMappings
+                })
+            }
+            return newDiscarded
+        })
+    }, [])
 
-    const handleSelectEntry = (entryId: number) => {
-        const newSelected = new Set(selectedEntries)
-        if (newSelected.has(entryId)) {
-            newSelected.delete(entryId)
-        } else {
-            newSelected.add(entryId)
-        }
-        setSelectedEntries(newSelected)
-    }
+    const handleSelectEntry = useCallback((entryId: number) => {
+        setSelectedEntries(prev => {
+            const newSelected = new Set(prev)
+            if (newSelected.has(entryId)) {
+                newSelected.delete(entryId)
+            } else {
+                newSelected.add(entryId)
+            }
+            return newSelected
+        })
+    }, [])
 
     const handleBulkAssign = () => {
         if (!bulkClient || selectedEntries.size === 0) return
@@ -128,81 +134,68 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
     }
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-xl p-6">
-                <h2 className="text-2xl font-bold text-purple-900 mb-2">
-                    📋 Clasificar Tareas por Cliente
-                </h2>
-                <p className="text-purple-800">
-                    Asigna un cliente a cada tarea o descártala. Total: <strong>{entries.length} tareas</strong>
-                </p>
-                <div className="mt-4 grid grid-cols-3 gap-4">
-                    <div className="bg-white p-3 rounded-lg border-2 border-green-200">
-                        <div className="text-sm text-green-700 font-medium">Con cliente</div>
-                        <div className="text-2xl font-bold text-green-600">{classifiedCount}</div>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border-2 border-gray-200">
-                        <div className="text-sm text-gray-700 font-medium">Descartadas</div>
-                        <div className="text-2xl font-bold text-gray-600">{discardedCount}</div>
-                    </div>
-                    <div className="bg-white p-3 rounded-lg border-2 border-red-200">
-                        <div className="text-sm text-red-700 font-medium">Sin clasificar</div>
-                        <div className="text-2xl font-bold text-red-600">{unclassifiedCount}</div>
+        <div className="space-y-3">
+            {/* Compact Header */}
+            <div className="bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                    <h2 className="text-lg font-bold text-purple-900">
+                        📋 Clasificar {entries.length} tareas
+                    </h2>
+                    <div className="flex gap-3 text-sm">
+                        <span className="text-green-700 font-semibold">✓ {classifiedCount}</span>
+                        <span className="text-gray-600">✗ {discardedCount}</span>
+                        <span className="text-red-600 font-semibold">⚠ {unclassifiedCount}</span>
                     </div>
                 </div>
-                <div className="mt-3">
-                    <div className="w-full bg-purple-200 rounded-full h-2">
-                        <div
-                            className="bg-green-500 h-2 rounded-full transition-all"
-                            style={{ width: `${((classifiedCount + discardedCount) / entries.length) * 100}%` }}
-                        />
-                    </div>
+                <div className="w-full bg-purple-200 rounded-full h-1.5">
+                    <div
+                        className="bg-green-500 h-1.5 rounded-full transition-all"
+                        style={{ width: `${((classifiedCount + discardedCount) / entries.length) * 100}%` }}
+                    />
                 </div>
             </div>
 
-            {/* Bulk Assignment */}
+            {/* Compact Bulk Assignment */}
             {selectedEntries.size > 0 && (
-                <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-4">
-                    <p className="text-sm font-medium text-blue-900 mb-3">
-                        Acción masiva ({selectedEntries.size} seleccionadas)
-                    </p>
-                    <div className="flex items-end gap-3">
-                        <div className="flex-1">
-                            <label className="text-xs text-blue-800 mb-1 block">Asignar cliente</label>
-                            <Select value={bulkClient} onValueChange={setBulkClient}>
-                                <SelectTrigger className="bg-white">
-                                    <SelectValue placeholder="Selecciona un cliente..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {clients.map(client => (
-                                        <SelectItem key={client.id} value={client.name}>
-                                            {client.name}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                <div className="bg-blue-50 border border-blue-300 rounded-lg p-2">
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-blue-900 whitespace-nowrap">
+                            {selectedEntries.size} selec.
+                        </span>
+                        <Select value={bulkClient} onValueChange={setBulkClient}>
+                            <SelectTrigger className="bg-white h-8 text-sm flex-1">
+                                <SelectValue placeholder="Cliente..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {clients.map(client => (
+                                    <SelectItem key={client.id} value={client.name}>
+                                        {client.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                         <Button
                             onClick={handleBulkAssign}
                             disabled={!bulkClient}
-                            className="bg-blue-600 hover:bg-blue-700"
+                            size="sm"
+                            className="bg-blue-600 hover:bg-blue-700 h-8"
                         >
                             ✓ Asignar
                         </Button>
                         <Button
                             onClick={handleBulkDiscard}
+                            size="sm"
                             variant="outline"
-                            className="border-red-300 text-red-600 hover:bg-red-50"
+                            className="border-red-300 text-red-600 hover:bg-red-50 h-8"
                         >
-                            ✗ Descartar {selectedEntries.size}
+                            ✗ Descartar
                         </Button>
                     </div>
                 </div>
             )}
 
             {/* Chronological Tasks List */}
-            <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            <div className="space-y-1.5 max-h-[70vh] overflow-y-auto">
                 {sortedEntries.map(entry => {
                     const isDiscarded = discardedEntries.has(entry.id)
                     const hasClient = !!clientMappings[entry.id]
@@ -211,72 +204,63 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
                     return (
                         <div 
                             key={entry.id} 
-                            className={`bg-white border-2 rounded-lg p-3 hover:shadow-md transition-all ${
-                                isDiscarded ? 'opacity-50 bg-gray-50 border-gray-300' : 
-                                hasClient ? 'border-green-300 bg-green-50' : 
-                                'border-gray-200'
+                            className={`bg-white border rounded-lg p-2 transition-colors ${
+                                isDiscarded ? 'opacity-40 bg-gray-50 border-gray-300' : 
+                                hasClient ? 'border-green-400 bg-green-50' : 
+                                'border-gray-200 hover:border-gray-300'
                             }`}
                         >
-                            <div className="flex items-start gap-3">
+                            <div className="flex items-center gap-2">
                                 {/* Checkbox for selection */}
                                 <input
                                     type="checkbox"
                                     checked={selectedEntries.has(entry.id)}
                                     onChange={() => handleSelectEntry(entry.id)}
-                                    className="mt-1 w-5 h-5 text-purple-600 rounded"
+                                    className="w-4 h-4 text-purple-600 rounded flex-shrink-0"
                                     disabled={isDiscarded}
                                 />
                                 
                                 {/* Task info */}
                                 <div className="flex-1 min-w-0">
-                                    <div className="flex items-start justify-between gap-4 mb-2">
-                                        <div className="flex-1 min-w-0">
-                                            <h3 className={`font-semibold text-gray-900 mb-1 ${isDiscarded ? 'line-through' : ''}`}>
-                                                {entry.taskName}
-                                            </h3>
-                                            <div className="flex items-center gap-3 text-sm text-gray-600">
-                                                <span>📅 {entry.date}</span>
-                                                <span>⏱️ {entry.durationHours.toFixed(2)}h</span>
-                                            </div>
-                                        </div>
+                                    <div className="flex items-center gap-2 mb-1.5">
+                                        <span className={`font-medium text-sm flex-1 min-w-0 truncate ${isDiscarded ? 'line-through text-gray-500' : 'text-gray-900'}`}>
+                                            {entry.taskName}
+                                        </span>
+                                        <span className="text-xs text-gray-500 whitespace-nowrap">{entry.date}</span>
+                                        <span className="text-xs text-gray-600 font-mono whitespace-nowrap">{entry.durationHours.toFixed(1)}h</span>
                                         
                                         {/* Discard checkbox */}
-                                        <label className="flex items-center gap-2 cursor-pointer whitespace-nowrap">
+                                        <label 
+                                            className="flex items-center gap-1 cursor-pointer whitespace-nowrap flex-shrink-0"
+                                            onClick={(e) => e.stopPropagation()}
+                                        >
                                             <input
                                                 type="checkbox"
                                                 checked={isDiscarded}
                                                 onChange={() => handleToggleDiscard(entry.id)}
-                                                className="w-4 h-4 text-red-600 rounded"
+                                                className="w-3.5 h-3.5 text-red-600 rounded"
                                             />
-                                            <span className="text-sm text-gray-700">Descartar</span>
+                                            <span className="text-xs text-gray-600">✗</span>
                                         </label>
                                     </div>
 
                                     {/* Client selector */}
                                     {!isDiscarded && (
-                                        <div className="w-full max-w-md">
-                                            <Select
-                                                value={clientMappings[entry.id] || ''}
-                                                onValueChange={(value) => handleClientChange(entry.id, value)}
-                                            >
-                                                <SelectTrigger className={hasClient ? 'border-green-500 bg-white' : 'border-gray-300'}>
-                                                    <SelectValue placeholder="Selecciona cliente..." />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    {clients.map(client => (
-                                                        <SelectItem key={client.id} value={client.name}>
-                                                            {client.name}
-                                                        </SelectItem>
-                                                    ))}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    )}
-                                    
-                                    {isDiscarded && (
-                                        <div className="text-sm text-gray-500 italic">
-                                            Esta tarea no se guardará
-                                        </div>
+                                        <Select
+                                            value={clientMappings[entry.id] || ''}
+                                            onValueChange={(value) => handleClientChange(entry.id, value)}
+                                        >
+                                            <SelectTrigger className={`h-8 text-sm ${hasClient ? 'border-green-500 bg-white' : 'border-gray-300'}`}>
+                                                <SelectValue placeholder="Cliente..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {clients.map(client => (
+                                                    <SelectItem key={client.id} value={client.name}>
+                                                        {client.name}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
                                     )}
                                 </div>
                             </div>
@@ -285,23 +269,23 @@ export function TaskClassifier({ entries, clients, onConfirm, onCancel }: TaskCl
                 })}
             </div>
 
-            {/* Actions */}
-            <div className="flex gap-4 sticky bottom-0 bg-white p-4 border-t-2 rounded-xl">
+            {/* Compact Actions */}
+            <div className="flex gap-2 sticky bottom-0 bg-white p-2 border-t">
                 <Button
                     onClick={onCancel}
                     variant="outline"
-                    className="flex-1"
+                    size="sm"
                 >
                     ❌ Cancelar
                 </Button>
                 <Button
                     onClick={handleConfirm}
                     disabled={!canConfirm}
-                    className="flex-1 bg-green-600 hover:bg-green-700 text-white text-lg"
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                 >
                     {canConfirm 
-                        ? `✅ Guardar ${classifiedCount} ${classifiedCount === 1 ? 'tarea' : 'tareas'}` 
-                        : `⚠️ Faltan ${unclassifiedCount} por clasificar o descartar`
+                        ? `✅ Guardar ${classifiedCount}` 
+                        : `⚠️ Faltan ${unclassifiedCount}`
                     }
                 </Button>
             </div>
