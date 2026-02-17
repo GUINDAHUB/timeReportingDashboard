@@ -16,6 +16,13 @@ import {
     AlertDialogTitle,
     AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select'
 import { TaskClassifier } from '@/components/import/task-classifier'
 
 interface ImportStats {
@@ -58,11 +65,14 @@ export default function ImportPage() {
     const [classifyingEntries, setClassifyingEntries] = useState<any[]>([])
     const [clients, setClients] = useState<Array<{ id: string; name: string }>>([])
     const [showClassifier, setShowClassifier] = useState(false)
+    const [employees, setEmployees] = useState<string[]>([])
+    const [loadingEmployees, setLoadingEmployees] = useState(false)
 
     useEffect(() => {
         loadImportHistory()
         loadDistributionMethod()
         loadClients()
+        loadEmployees()
     }, [])
 
     async function loadClients() {
@@ -78,6 +88,35 @@ export default function ImportPage() {
         }
 
         setClients(data || [])
+    }
+
+    async function loadEmployees() {
+        setLoadingEmployees(true)
+        try {
+            // Get unique employee names from time_entries
+            const { data, error } = await supabase
+                .from('time_entries')
+                .select('employee_name')
+
+            if (error) {
+                console.error('Error loading employees:', error)
+                return
+            }
+
+            if (!data || data.length === 0) {
+                setEmployees([])
+                return
+            }
+
+            // Extract unique employee names and sort
+            const uniqueEmployees = Array.from(new Set(data.map(e => e.employee_name)))
+                .filter(name => name && name.trim() !== '')
+                .sort()
+
+            setEmployees(uniqueEmployees)
+        } finally {
+            setLoadingEmployees(false)
+        }
     }
 
     async function loadDistributionMethod() {
@@ -484,16 +523,30 @@ export default function ImportPage() {
                                 <label className="block text-sm font-medium text-blue-900 mb-2">
                                     Nombre del Empleado *
                                 </label>
-                                <input
-                                    type="text"
-                                    value={employeeName}
-                                    onChange={(e) => setEmployeeName(e.target.value)}
-                                    placeholder="Ej: María García"
-                                    className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    disabled={uploading}
-                                />
+                                {loadingEmployees ? (
+                                    <div className="w-full px-4 py-2 border border-blue-300 rounded-lg bg-blue-50 text-blue-700">
+                                        Cargando empleados...
+                                    </div>
+                                ) : employees.length > 0 ? (
+                                    <Select value={employeeName} onValueChange={setEmployeeName} disabled={uploading}>
+                                        <SelectTrigger className="w-full border-blue-300 focus:ring-2 focus:ring-blue-500">
+                                            <SelectValue placeholder="Selecciona un empleado..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {employees.map((emp) => (
+                                                <SelectItem key={emp} value={emp}>
+                                                    {emp}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                ) : (
+                                    <div className="w-full px-4 py-2 border border-yellow-300 rounded-lg bg-yellow-50 text-yellow-800 text-sm">
+                                        ⚠️ No hay empleados en la base de datos. Importa primero datos desde ClickUp para crear la lista de empleados.
+                                    </div>
+                                )}
                                 <p className="text-xs text-blue-700 mt-1">
-                                    El nombre debe coincidir con el empleado en la base de datos
+                                    Lista de empleados extraída de importaciones anteriores
                                 </p>
                             </div>
 
