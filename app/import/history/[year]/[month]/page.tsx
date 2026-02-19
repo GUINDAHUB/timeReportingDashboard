@@ -191,28 +191,54 @@ export default function ImportCheckPage() {
     async function handleConfirmReclassification(mappings: Record<number, string>) {
         setReclassifying(true)
         try {
-            // Build updates array with real database IDs
-            const updates = Object.entries(mappings).map(([tempId, clientName]) => {
-                const entry = classifyingEntries[parseInt(tempId)]
-                return {
-                    id: entry.dbId, // Use the real database ID
-                    clientName,
+            // Separate entries into: to update and to delete
+            const entriesToUpdate: Array<{ id: string; clientName: string }> = []
+            const entriesToDelete: string[] = []
+
+            classifyingEntries.forEach((entry, index) => {
+                if (mappings[index]) {
+                    // Has a client mapping -> update
+                    entriesToUpdate.push({
+                        id: entry.dbId,
+                        clientName: mappings[index],
+                    })
+                } else {
+                    // No mapping (discarded) -> delete
+                    entriesToDelete.push(entry.dbId)
                 }
             })
 
-            const response = await fetch('/api/categorization/recategorize', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ updates }),
-            })
+            // Update entries with new clients
+            if (entriesToUpdate.length > 0) {
+                const response = await fetch('/api/categorization/recategorize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ updates: entriesToUpdate }),
+                })
 
-            const result = await response.json()
+                const result = await response.json()
 
-            if (!response.ok) {
-                throw new Error(result.error || 'Error al reclasificar')
+                if (!response.ok) {
+                    throw new Error(result.error || 'Error al reclasificar')
+                }
+
+                toast.success(result.message)
             }
 
-            toast.success(result.message)
+            // Delete discarded entries
+            if (entriesToDelete.length > 0) {
+                const { error: deleteError } = await supabase
+                    .from('time_entries')
+                    .delete()
+                    .in('id', entriesToDelete)
+
+                if (deleteError) {
+                    throw deleteError
+                }
+
+                toast.success(`Eliminadas ${entriesToDelete.length} entradas descartadas`)
+            }
+
             setShowClassifier(false)
             setClassifyingEntries([])
             loadEntries() // Reload to show updated data
