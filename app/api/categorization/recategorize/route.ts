@@ -1,168 +1,101 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-import { categorizeTask, invalidateCache } from '@/lib/services/categorizer'
+import { supabase } from '@/lib/supabase/client'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const supabase = createClient(supabaseUrl, supabaseKey)
-
-interface RecategorizationResult {
-    total_analyzed: number
-    recategorized: number
-    still_uncategorized: number
-    details: Array<{
-        task_name: string
-        old_category: string
-        new_category: string
-        keyword_matched: string
-    }>
-}
-
-/**
- * POST /api/categorization/recategorize
- * 
- * Recategoriza tareas que están marcadas como "Sin Clasificar"
- * usando las keywords actualizadas
- */
 export async function POST(request: NextRequest) {
     try {
-        // Invalidar cache para asegurar que usamos las keywords más recientes
-        invalidateCache()
+        const body = await request.json()
+        const { updates } = body // Array of { id: string, clientName: string }
 
-        // 1. Obtener el ID de la categoría "Sin Clasificar"
-        const { data: defaultCategory, error: defaultError } = await supabase
-            .from('categories')
+        if (!updates || !Array.isArray(updates) || updates.length === 0) {
+            return NextResponse.json(
+                { error: 'Se requiere un array de actualizaciones' },
+                { status: 400 }
+            )
+        }
+
+        // Get client IDs for the given client names
+        const clientNames = [...new Set(updates.map(u => u.clientName))]
+        const { data: clients, error: clientError } = await supabase
+            .from('clients')
             .select('id, name')
-            .eq('is_default', true)
+            .in('name', clientNames)
+
+        if (clientError) {
+            console.error('Error fetching clients:', clientError)
+            return NextResponse.json({ error: 'Error al cargar clientes' }, { status: 500 })
+        }
+
+        // Create a map of client name to client ID
+        const clientMap = new Map<string, string>()
+        clients.forEach(client => {
+            clientMap.set(client.name, client.id)
+        })
+
+        // Update each entry
+        let successCount = 0
+        let errorCount = 0
+
+        for (const update of updates) {
+            const clientId = clientMap.get(update.clientName)
+            
+            if (!clientId) {
+                console.error(`Client not found: ${update.clientName}`)
+                errorCount++
+                continue
+            }
+
+            const { error } = await supabase
+                .from('time_entries')
+                .update({ 
+                    client_id: clientId,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', update.id)
+
+            if (error) {
+                console.error(`Error updating entry ${update.id}:`, error)
+                errorCount++
+            } else {
+                successCount++
+            }
+        }
+
+        // Check if "Sin Clasificar" client still has entries
+        const { data: sinClasificarClient } = await supabase
+            .from('clients')
+            .select('id')
+            .eq('name', 'Sin Clasificar')
             .single()
 
-        if (defaultError || !defaultCategory) {
-            return NextResponse.json({
-                error: 'No se encontró la categoría "Sin Clasificar"',
-                details: defaultError
-            }, { status: 400 })
-        }
+        if (sinClasificarClient) {
+            const { count } = await supabase
+                .from('time_entries')
+                .select('id', { count: 'exact', head: true })
+                .eq('client_id', sinClasificarClient.id)
 
-        // 2. Obtener todas las tareas con categoría "Sin Clasificar"
-        const { data: uncategorizedEntries, error: entriesError } = await supabase
-            .from('time_entries')
-            .select('id, task_name, category_id')
-            .eq('category_id', defaultCategory.id)
-
-        if (entriesError) {
-            return NextResponse.json({
-                error: 'Error al obtener tareas sin clasificar',
-                details: entriesError
-            }, { status: 500 })
-        }
-
-        if (!uncategorizedEntries || uncategorizedEntries.length === 0) {
-            return NextResponse.json({
-                success: true,
-                result: {
-                    total_analyzed: 0,
-                    recategorized: 0,
-                    still_uncategorized: 0,
-                    details: []
-                }
-            })
-        }
-
-        // 3. Recategorizar cada tarea
-        const result: RecategorizationResult = {
-            total_analyzed: uncategorizedEntries.length,
-            recategorized: 0,
-            still_uncategorized: 0,
-            details: []
-        }
-
-        // Obtener nombres de categorías para el reporte
-        const { data: categories, error: categoriesError } = await supabase
-            .from('categories')
-            .select('id, name')
-
-        if (categoriesError) {
-            console.error('Error loading categories for report:', categoriesError)
-        }
-
-        const categoryMap = new Map(categories?.map(c => [c.id, c.name]) || [])
-
-        for (const entry of uncategorizedEntries) {
-            try {
-                // Intentar categorizar
-                const categorization = await categorizeTask(entry.task_name)
-
-                if (categorization.category_id && categorization.category_id !== defaultCategory.id) {
-                    // Se encontró una categoría válida, actualizar
-                    const { error: updateError } = await supabase
-                        .from('time_entries')
-                        .update({ category_id: categorization.category_id })
-                        .eq('id', entry.id)
-
-                    if (updateError) {
-                        console.error(`Error updating entry ${entry.id}:`, updateError)
-                        continue
-                    }
-
-                    // Registrar historial de cambio
-                    try {
-                        await supabase
-                            .from('category_assignments_history')
-                            .insert({
-                                time_entry_id: entry.id,
-                                old_category_id: defaultCategory.id,
-                                new_category_id: categorization.category_id,
-                                assignment_type: 'automatic',
-                                keyword_matched: categorization.keyword_matched,
-                                notes: 'Recategorización automática'
-                            })
-                    } catch (historyError) {
-                        // Non-critical, just log
-                        console.warn('Could not record history:', historyError)
-                    }
-
-                    // Actualizar estado en uncategorized_tasks
-                    try {
-                        await supabase
-                            .from('uncategorized_tasks')
-                            .update({
-                                status: 'reviewed',
-                                reviewed_at: new Date().toISOString(),
-                                reviewed_by: 'system'
-                            })
-                            .eq('time_entry_id', entry.id)
-                    } catch (uncatError) {
-                        // Non-critical
-                        console.warn('Could not update uncategorized_tasks:', uncatError)
-                    }
-
-                    result.recategorized++
-                    result.details.push({
-                        task_name: entry.task_name,
-                        old_category: defaultCategory.name,
-                        new_category: categoryMap.get(categorization.category_id) || 'Unknown',
-                        keyword_matched: categorization.keyword_matched || ''
-                    })
-                } else {
-                    // Sigue sin categoría
-                    result.still_uncategorized++
-                }
-            } catch (error) {
-                console.error(`Error processing entry ${entry.id}:`, error)
-                result.still_uncategorized++
+            // If no entries remain, delete the "Sin Clasificar" client
+            if (count === 0) {
+                await supabase
+                    .from('clients')
+                    .delete()
+                    .eq('id', sinClasificarClient.id)
+                
+                console.log('Deleted "Sin Clasificar" client (no entries remaining)')
             }
         }
 
         return NextResponse.json({
             success: true,
-            result
+            successCount,
+            errorCount,
+            message: `${successCount} entradas actualizadas correctamente${errorCount > 0 ? `, ${errorCount} errores` : ''}`
         })
 
     } catch (error) {
-        console.error('Recategorization error:', error)
-        return NextResponse.json({
-            error: 'Error interno al recategorizar',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        }, { status: 500 })
+        console.error('Error in recategorize:', error)
+        return NextResponse.json(
+            { error: 'Error al reclasificar entradas' },
+            { status: 500 }
+        )
     }
 }

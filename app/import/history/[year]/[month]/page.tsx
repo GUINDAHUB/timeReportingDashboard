@@ -14,6 +14,13 @@ import {
     SelectValue,
 } from '@/components/ui/select'
 import { toast } from 'sonner'
+import { TaskClassifier } from '@/components/import/task-classifier'
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
 
 interface TimeEntry {
     id: string
@@ -36,9 +43,14 @@ export default function ImportCheckPage() {
     const [filterEmployee, setFilterEmployee] = useState<string>('all')
     const [selectedEntries, setSelectedEntries] = useState<Set<string>>(new Set())
     const [deleting, setDeleting] = useState(false)
+    const [showClassifier, setShowClassifier] = useState(false)
+    const [classifyingEntries, setClassifyingEntries] = useState<any[]>([])
+    const [clients, setClients] = useState<Array<{ id: string; name: string }>>([])
+    const [reclassifying, setReclassifying] = useState(false)
 
     useEffect(() => {
         loadEntries()
+        loadClients()
     }, [])
 
     async function loadEntries() {
@@ -68,6 +80,20 @@ export default function ImportCheckPage() {
             setEntries(data as any)
         }
         setLoading(false)
+    }
+
+    async function loadClients() {
+        const { data, error } = await supabase
+            .from('clients')
+            .select('id, name')
+            .order('name')
+
+        if (error) {
+            console.error('Error loading clients:', error)
+        } else {
+            // Filter out "Sin Clasificar" from the options
+            setClients((data || []).filter(c => c.name !== 'Sin Clasificar'))
+        }
     }
 
     function getUniqueEmployees(): string[] {
@@ -139,12 +165,73 @@ export default function ImportCheckPage() {
         }
     }
 
+    function handleStartReclassification() {
+        // Get all "Sin Clasificar" entries
+        const unclassifiedEntries = entries
+            .filter(e => e.client?.name === 'Sin Clasificar')
+            .map((e, index) => ({
+                id: index, // Temporary ID for the classifier
+                dbId: e.id, // Real database ID
+                taskName: e.task_name,
+                durationHours: e.duration_hours,
+                date: e.date,
+                employeeName: e.employee_name,
+                clientName: 'Sin Clasificar',
+            }))
+
+        if (unclassifiedEntries.length === 0) {
+            toast.info('No hay entradas sin clasificar')
+            return
+        }
+
+        setClassifyingEntries(unclassifiedEntries)
+        setShowClassifier(true)
+    }
+
+    async function handleConfirmReclassification(mappings: Record<number, string>) {
+        setReclassifying(true)
+        try {
+            // Build updates array with real database IDs
+            const updates = Object.entries(mappings).map(([tempId, clientName]) => {
+                const entry = classifyingEntries[parseInt(tempId)]
+                return {
+                    id: entry.dbId, // Use the real database ID
+                    clientName,
+                }
+            })
+
+            const response = await fetch('/api/categorization/recategorize', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ updates }),
+            })
+
+            const result = await response.json()
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Error al reclasificar')
+            }
+
+            toast.success(result.message)
+            setShowClassifier(false)
+            setClassifyingEntries([])
+            loadEntries() // Reload to show updated data
+        } catch (error) {
+            console.error('Error reclassifying:', error)
+            toast.error('Error al reclasificar las entradas')
+        } finally {
+            setReclassifying(false)
+        }
+    }
+
     const filteredEntries = getFilteredEntries()
     const totalHours = filteredEntries.reduce((acc, curr) => acc + curr.duration_hours, 0)
     const selectedCount = selectedEntries.size
     const selectedHours = entries
         .filter(e => selectedEntries.has(e.id))
         .reduce((acc, curr) => acc + curr.duration_hours, 0)
+    
+    const unclassifiedCount = entries.filter(e => e.client?.name === 'Sin Clasificar').length
 
     return (
         <div className="container mx-auto px-4 py-8">
@@ -162,9 +249,20 @@ export default function ImportCheckPage() {
                             Verificando datos importados
                         </p>
                     </div>
-                    <div className="text-right bg-slate-100 p-3 rounded-lg">
-                        <p className="text-sm text-gray-500">Total Horas</p>
-                        <p className="text-2xl font-bold text-slate-800">{formatHours(totalHours)}</p>
+                    <div className="flex items-center gap-4">
+                        {unclassifiedCount > 0 && (
+                            <Button
+                                onClick={handleStartReclassification}
+                                className="bg-amber-600 hover:bg-amber-700 text-white"
+                                disabled={loading}
+                            >
+                                🏷️ Reclasificar {unclassifiedCount} sin clasificar
+                            </Button>
+                        )}
+                        <div className="text-right bg-slate-100 p-3 rounded-lg">
+                            <p className="text-sm text-gray-500">Total Horas</p>
+                            <p className="text-2xl font-bold text-slate-800">{formatHours(totalHours)}</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -319,6 +417,28 @@ export default function ImportCheckPage() {
                     Mostrando {filteredEntries.length} registros ({formatHours(totalHours)} horas)
                 </p>
             )}
+
+            {/* Reclassification Dialog */}
+            <Dialog open={showClassifier} onOpenChange={setShowClassifier}>
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Reclasificar entradas sin clasificar</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-1 overflow-y-auto">
+                        {showClassifier && (
+                            <TaskClassifier
+                                entries={classifyingEntries}
+                                clients={clients}
+                                onConfirm={handleConfirmReclassification}
+                                onCancel={() => {
+                                    setShowClassifier(false)
+                                    setClassifyingEntries([])
+                                }}
+                            />
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }
