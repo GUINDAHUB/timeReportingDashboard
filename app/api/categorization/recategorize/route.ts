@@ -47,8 +47,7 @@ export async function POST(request: NextRequest) {
             const { error } = await supabase
                 .from('time_entries')
                 .update({ 
-                    client_id: clientId,
-                    updated_at: new Date().toISOString()
+                    client_id: clientId
                 })
                 .eq('id', update.id)
 
