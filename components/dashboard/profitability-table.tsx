@@ -264,23 +264,30 @@ export function ProfitabilityTable({ data }: Props) {
                                         </td>
                                         <td className="px-4 py-4 text-right">
                                             <div className="flex items-center justify-end gap-2">
-                                                <span className={`font-bold text-lg ${
-                                                    item.netMarginPercent >= 50 ? 'text-green-600' :
-                                                    item.netMarginPercent >= 20 ? 'text-blue-600' :
-                                                    item.netMarginPercent >= 0 ? 'text-orange-500' : 'text-red-600'
-                                                }`}>
-                                                    {formatNumber(item.netMarginPercent, 1)}%
-                                                </span>
-                                                <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                    <div
-                                                        className={`h-full rounded-full ${
-                                                            item.netMarginPercent >= 50 ? 'bg-green-500' :
-                                                            item.netMarginPercent >= 20 ? 'bg-blue-500' :
-                                                            item.netMarginPercent >= 0 ? 'bg-orange-500' : 'bg-red-500'
-                                                        }`}
-                                                        style={{ width: `${Math.max(0, Math.min(100, item.netMarginPercent))}%` }}
-                                                    />
-                                                </div>
+                                                {(() => {
+                                                    const isNegativeMargin = item.netMargin < 0
+                                                    const isNegativePercent = item.netMarginPercent < 0
+                                                    const showRed = isNegativeMargin || isNegativePercent
+                                                    const colorClass = showRed ? 'text-red-600' :
+                                                        item.netMarginPercent >= 50 ? 'text-green-600' :
+                                                        item.netMarginPercent >= 20 ? 'text-blue-600' : 'text-orange-500'
+                                                    const barColorClass = showRed ? 'bg-red-500' :
+                                                        item.netMarginPercent >= 50 ? 'bg-green-500' :
+                                                        item.netMarginPercent >= 20 ? 'bg-blue-500' : 'bg-orange-500'
+                                                    return (
+                                                        <>
+                                                            <span className={`font-bold text-lg ${colorClass}`}>
+                                                                {formatNumber(item.netMarginPercent, 1)}%
+                                                            </span>
+                                                            <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
+                                                                <div
+                                                                    className={`h-full rounded-full ${barColorClass}`}
+                                                                    style={{ width: `${Math.max(0, Math.min(100, item.netMarginPercent))}%` }}
+                                                                />
+                                                            </div>
+                                                        </>
+                                                    )
+                                                })()}
                                             </div>
                                         </td>
                                     </tr>

@@ -178,25 +178,51 @@ export async function POST(request: NextRequest) {
             }, { status: 400 })
         }
 
-        // Ensure "Sin Clasificar" client exists
+        // Ensure "Sin Clasificar" client exists (puede estar inactivo y no aparecer en la lista)
         let sinClasificarId = clients.find(c => c.name === 'Sin Clasificar')?.id
         if (!sinClasificarId) {
-            // Create "Sin Clasificar" client
-            const { data: newClient, error: createError } = await supabase
+            // Buscar por nombre sin filtrar por is_active (por si existe pero está inactivo)
+            const { data: existing } = await supabase
                 .from('clients')
-                .insert({ name: 'Sin Clasificar', default_fee: 0, is_active: true })
-                .select()
-                .single()
+                .select('id, name')
+                .eq('name', 'Sin Clasificar')
+                .maybeSingle()
 
-            if (createError || !newClient) {
-                return NextResponse.json({
-                    error: 'Error creating default "Sin Clasificar" client',
-                    details: createError
-                }, { status: 500 })
+            if (existing) {
+                sinClasificarId = existing.id
+                await supabase.from('clients').update({ is_active: true }).eq('id', existing.id)
+                clients.push({ id: existing.id, name: existing.name })
+            } else {
+                // Crear solo si no existe (evitar duplicate key si hubo race)
+                const { data: newClient, error: createError } = await supabase
+                    .from('clients')
+                    .insert({ name: 'Sin Clasificar', default_fee: 0, is_active: true })
+                    .select()
+                    .single()
+
+                if (createError) {
+                    if (createError.code === '23505') {
+                        const { data: afterConflict } = await supabase
+                            .from('clients')
+                            .select('id, name')
+                            .eq('name', 'Sin Clasificar')
+                            .single()
+                        if (afterConflict) {
+                            sinClasificarId = afterConflict.id
+                            clients.push(afterConflict)
+                        }
+                    }
+                    if (!sinClasificarId) {
+                        return NextResponse.json({
+                            error: 'Error creating default "Sin Clasificar" client',
+                            details: createError
+                        }, { status: 500 })
+                    }
+                } else if (newClient) {
+                    sinClasificarId = newClient.id
+                    clients.push(newClient)
+                }
             }
-
-            sinClasificarId = newClient.id
-            clients.push(newClient)
         }
 
         // Map client names
