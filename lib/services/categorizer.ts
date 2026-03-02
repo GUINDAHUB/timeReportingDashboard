@@ -3,6 +3,11 @@
  * 
  * Auto-categorizes tasks based on keyword matching with hierarchical categories
  * Implements strict matching: only assigns if keyword found, otherwise returns null
+ * 
+ * Matching de keywords:
+ * - Palabras sueltas (ej. "ia") se comparan como palabra completa, no como substring
+ *   para evitar falsos positivos tipo "borgIA".
+ * - Keywords con espacios (frases) se siguen buscando como substring.
  */
 
 import { supabase } from '@/lib/supabase/client'
@@ -72,18 +77,37 @@ export async function categorizeTask(
     const data = await loadCategorizationData()
     const normalizedTaskName = taskName.toLowerCase().trim()
 
+    // Tokenizar el nombre de la tarea en palabras (letras/números, ignorando signos)
+    const taskTokens = normalizedTaskName
+        .split(/[^a-z0-9áéíóúüñ]+/i)
+        .filter(Boolean)
+
     // Find matching keywords (sorted by priority, highest first)
     // Only check child categories (those with parent_id)
     for (const keyword of data.keywords) {
-        const normalizedKeyword = keyword.word.toLowerCase()
+        const rawKeyword = keyword.word || ''
+        const normalizedKeyword = rawKeyword.toLowerCase().trim()
 
-        if (normalizedTaskName.includes(normalizedKeyword)) {
+        if (!normalizedKeyword) continue
+
+        const isPhrase = normalizedKeyword.includes(' ')
+        let matches = false
+
+        if (isPhrase) {
+            // Para frases, mantenemos búsqueda por substring
+            matches = normalizedTaskName.includes(normalizedKeyword)
+        } else {
+            // Para palabras sueltas, solo match si coincide con un token completo
+            matches = taskTokens.includes(normalizedKeyword)
+        }
+
+        if (matches) {
             // Verify this category is a child category (not a parent)
             const category = data.categories.find(c => c.id === keyword.category_id)
             if (category && category.parent_id) {
                 return {
                     category_id: keyword.category_id,
-                    keyword_matched: keyword.word
+                    keyword_matched: rawKeyword
                 }
             }
         }
@@ -118,14 +142,24 @@ export async function categorizeTasks(
     const data = await loadCategorizationData()
     const results = new Map<string, { category_id: string | null; keyword_matched: string | null }>()
 
-    // Create a map of keywords to category info, sorted by priority
-    // Only include child categories (those with parent_id)
-    const keywordMap = new Map<string, { category_id: string; priority: number; word: string }>()
-    
+    // Create a list of keywords with category info, only for child categories
+    const keywordsInfo: Array<{
+        normalized: string
+        isPhrase: boolean
+        category_id: string
+        priority: number
+        word: string
+    }> = []
+
     data.keywords.forEach(kw => {
         const category = data.categories.find(c => c.id === kw.category_id)
         if (category && category.parent_id) {
-            keywordMap.set(kw.word.toLowerCase(), {
+            const normalized = (kw.word || '').toLowerCase().trim()
+            if (!normalized) return
+
+            keywordsInfo.push({
+                normalized,
+                isPhrase: normalized.includes(' '),
                 category_id: kw.category_id,
                 priority: kw.priority,
                 word: kw.word
@@ -135,18 +169,28 @@ export async function categorizeTasks(
 
     for (const taskName of taskNames) {
         const normalizedTaskName = taskName.toLowerCase().trim()
+        const taskTokens = normalizedTaskName
+            .split(/[^a-z0-9áéíóúüñ]+/i)
+            .filter(Boolean)
+
         let matchedCategory: { category_id: string; keyword_matched: string } | null = null
         let highestPriority = -1
 
         // Find highest priority matching keyword
-        for (const [keyword, info] of keywordMap.entries()) {
-            if (normalizedTaskName.includes(keyword)) {
-                if (info.priority > highestPriority) {
-                    highestPriority = info.priority
-                    matchedCategory = {
-                        category_id: info.category_id,
-                        keyword_matched: info.word
-                    }
+        for (const info of keywordsInfo) {
+            let matches = false
+
+            if (info.isPhrase) {
+                matches = normalizedTaskName.includes(info.normalized)
+            } else {
+                matches = taskTokens.includes(info.normalized)
+            }
+
+            if (matches && info.priority > highestPriority) {
+                highestPriority = info.priority
+                matchedCategory = {
+                    category_id: info.category_id,
+                    keyword_matched: info.word
                 }
             }
         }
