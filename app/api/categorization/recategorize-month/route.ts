@@ -230,13 +230,17 @@ export async function POST(request: NextRequest) {
                 try {
                     await supabase
                         .from('uncategorized_tasks')
-                        .insert({
-                            time_entry_id: entry.id,
-                            task_name: entry.task_name,
-                            status: 'pending',
-                        })
-                        .onConflict('time_entry_id')
-                        .ignore()
+                        .upsert(
+                            {
+                                time_entry_id: entry.id,
+                                task_name: entry.task_name,
+                                status: 'pending',
+                            },
+                            {
+                                onConflict: 'time_entry_id',
+                                ignoreDuplicates: true,
+                            }
+                        )
                 } catch (uncatInsertError) {
                     console.warn(
                         'Could not insert into uncategorized_tasks for monthly recategorization:',
