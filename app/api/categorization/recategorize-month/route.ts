@@ -228,19 +228,18 @@ export async function POST(request: NextRequest) {
 
                 // Asegurar que aparece en la tabla de tareas sin clasificar
                 try {
-                    await supabase
+                    const { error: insertError } = await supabase
                         .from('uncategorized_tasks')
-                        .upsert(
-                            {
-                                time_entry_id: entry.id,
-                                task_name: entry.task_name,
-                                status: 'pending',
-                            },
-                            {
-                                onConflict: 'time_entry_id',
-                                ignoreDuplicates: true,
-                            }
-                        )
+                        .insert({
+                            time_entry_id: entry.id,
+                            task_name: entry.task_name,
+                            status: 'pending',
+                        })
+
+                    // Ignorar errores de clave duplicada (ya existe para ese time_entry_id)
+                    if (insertError && insertError.code !== '23505') {
+                        throw insertError
+                    }
                 } catch (uncatInsertError) {
                     console.warn(
                         'Could not insert into uncategorized_tasks for monthly recategorization:',
