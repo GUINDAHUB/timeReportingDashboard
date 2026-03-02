@@ -39,8 +39,13 @@ export default function CategorizationPage() {
     
     // Filters state
     const now = new Date()
+    const [dateFilterMode, setDateFilterMode] = useState<'month' | 'range'>('month')
     const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1)
     const [selectedYear, setSelectedYear] = useState(now.getFullYear())
+    const [rangeStartMonth, setRangeStartMonth] = useState(now.getMonth() + 1)
+    const [rangeStartYear, setRangeStartYear] = useState(now.getFullYear())
+    const [rangeEndMonth, setRangeEndMonth] = useState(now.getMonth() + 1)
+    const [rangeEndYear, setRangeEndYear] = useState(now.getFullYear())
     const [selectedClient, setSelectedClient] = useState('all')
     const [selectedEmployee, setSelectedEmployee] = useState('all')
     const [selectedCategory, setSelectedCategory] = useState('all')
@@ -53,16 +58,37 @@ export default function CategorizationPage() {
 
     useEffect(() => {
         loadData()
-    }, [selectedMonth, selectedYear])
+    }, [
+        dateFilterMode,
+        selectedMonth,
+        selectedYear,
+        rangeStartMonth,
+        rangeStartYear,
+        rangeEndMonth,
+        rangeEndYear
+    ])
 
     async function loadData() {
         setLoading(true)
         try {
-            // Calculate date range for selected month
-            const startDate = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`
-            const nextMonth = selectedMonth === 12 ? 1 : selectedMonth + 1
-            const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear
-            const endDate = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-01`
+            // Calculate date range for selected period
+            let startDate: string
+            let endDate: string
+
+            if (dateFilterMode === 'month') {
+                startDate = `${selectedYear}-${selectedMonth.toString().padStart(2, '0')}-01`
+                const nextMonth = selectedMonth === 12 ? 1 : selectedMonth + 1
+                const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear
+                endDate = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-01`
+            } else {
+                // Rango de meses: desde (rangeStartYear, rangeStartMonth) hasta (rangeEndYear, rangeEndMonth)
+                // endDate es exclusivo: primer día del mes siguiente al mes final
+                startDate = `${rangeStartYear}-${rangeStartMonth.toString().padStart(2, '0')}-01`
+                const endIsDecember = rangeEndMonth === 12
+                const endNextMonth = endIsDecember ? 1 : rangeEndMonth + 1
+                const endNextYear = endIsDecember ? rangeEndYear + 1 : rangeEndYear
+                endDate = `${endNextYear}-${endNextMonth.toString().padStart(2, '0')}-01`
+            }
 
             // Fetch active employees with profile
             const { data: employeesData, error: employeesError } = await supabase
@@ -217,16 +243,26 @@ export default function CategorizationPage() {
 
                 {/* Filters */}
                 <FiltersPanel
+                    mode={dateFilterMode}
                     selectedMonth={selectedMonth}
                     selectedYear={selectedYear}
+                    rangeStartMonth={rangeStartMonth}
+                    rangeStartYear={rangeStartYear}
+                    rangeEndMonth={rangeEndMonth}
+                    rangeEndYear={rangeEndYear}
                     selectedClient={selectedClient}
                     selectedEmployee={selectedEmployee}
                     selectedCategory={selectedCategory}
                     clients={clients}
                     employees={employees}
                     categories={categories}
+                    onModeChange={setDateFilterMode}
                     onMonthChange={setSelectedMonth}
                     onYearChange={setSelectedYear}
+                    onRangeStartMonthChange={setRangeStartMonth}
+                    onRangeStartYearChange={setRangeStartYear}
+                    onRangeEndMonthChange={setRangeEndMonth}
+                    onRangeEndYearChange={setRangeEndYear}
                     onClientChange={setSelectedClient}
                     onEmployeeChange={setSelectedEmployee}
                     onCategoryChange={setSelectedCategory}
