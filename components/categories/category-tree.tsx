@@ -77,11 +77,18 @@ export function CategoryTree({
                                 <h3 className={`font-semibold ${isParent ? 'text-base' : 'text-sm'}`}>
                                     {category.name}
                                 </h3>
-                                {category.description && (
-                                    <p className="text-xs text-gray-500 mt-0.5">
-                                        {category.description}
-                                    </p>
-                                )}
+                                <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                                    {category.description && (
+                                        <p className="text-xs text-gray-500">
+                                            {category.description}
+                                        </p>
+                                    )}
+                                    {!isParent && typeof (category as any).match_priority === 'number' && (
+                                        <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 text-[10px] rounded-full border border-amber-100">
+                                            Prio auto: {(category as any).match_priority}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
 
                             {/* Stats badges */}

@@ -22,7 +22,6 @@ export function KeywordsModal({
 }: KeywordsModalProps) {
     const [keywords, setKeywords] = useState<Keyword[]>([])
     const [newKeyword, setNewKeyword] = useState('')
-    const [newPriority, setNewPriority] = useState(10)
     const [isLoading, setIsLoading] = useState(true)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -52,12 +51,10 @@ export function KeywordsModal({
         try {
             const created = await createKeyword({
                 category_id: categoryId,
-                word: newKeyword.trim(),
-                priority: newPriority
+                word: newKeyword.trim()
             })
             setKeywords([created, ...keywords])
             setNewKeyword('')
-            setNewPriority(10)
         } catch (error: any) {
             alert(error.message || 'Error al crear keyword')
         } finally {
@@ -73,17 +70,6 @@ export function KeywordsModal({
             setKeywords(keywords.filter(k => k.id !== keywordId))
         } catch (error) {
             alert('Error al eliminar keyword')
-        }
-    }
-
-    const handleUpdatePriority = async (keywordId: string, newPriority: number) => {
-        try {
-            await updateKeyword(keywordId, { priority: newPriority })
-            setKeywords(keywords.map(k =>
-                k.id === keywordId ? { ...k, priority: newPriority } : k
-            ).sort((a, b) => b.priority - a.priority))
-        } catch (error) {
-            alert('Error al actualizar prioridad')
         }
     }
 
@@ -126,16 +112,6 @@ export function KeywordsModal({
                                 placeholder="Ej: rodaje, sesión, grabación..."
                                 disabled={isSubmitting}
                             />
-                            <input
-                                type="number"
-                                value={newPriority}
-                                onChange={(e) => setNewPriority(parseInt(e.target.value))}
-                                className="w-24 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="Prioridad"
-                                min="0"
-                                max="100"
-                                disabled={isSubmitting}
-                            />
                             <button
                                 type="submit"
                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
@@ -146,7 +122,8 @@ export function KeywordsModal({
                             </button>
                         </div>
                         <p className="text-xs text-gray-500 mt-2">
-                            💡 La prioridad determina qué keyword se usa primero cuando hay múltiples coincidencias. Mayor número = mayor prioridad.
+                            💡 Todas las keywords de esta subcategoría comparten la misma prioridad, que ahora se define
+                            a nivel de categoría (campo "Prioridad de auto-categorización").
                         </p>
                     </form>
 
@@ -165,7 +142,6 @@ export function KeywordsModal({
                         <div className="space-y-2">
                             <div className="flex items-center justify-between text-xs font-medium text-gray-500 px-3 pb-2">
                                 <span>KEYWORD</span>
-                                <span>PRIORIDAD</span>
                             </div>
                             {keywords.map((keyword) => (
                                 <div
@@ -174,25 +150,6 @@ export function KeywordsModal({
                                 >
                                     <span className="font-mono text-sm">{keyword.word}</span>
                                     <div className="flex items-center gap-2">
-                                        <div className="flex items-center gap-1">
-                                            <button
-                                                onClick={() => handleUpdatePriority(keyword.id, keyword.priority + 1)}
-                                                className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
-                                                title="Aumentar prioridad"
-                                            >
-                                                <ArrowUp className="w-4 h-4" />
-                                            </button>
-                                            <span className="w-12 text-center font-semibold text-sm">
-                                                {keyword.priority}
-                                            </span>
-                                            <button
-                                                onClick={() => handleUpdatePriority(keyword.id, Math.max(0, keyword.priority - 1))}
-                                                className="p-1 text-orange-600 hover:bg-orange-50 rounded transition-colors"
-                                                title="Disminuir prioridad"
-                                            >
-                                                <ArrowDown className="w-4 h-4" />
-                                            </button>
-                                        </div>
                                         <button
                                             onClick={() => handleDeleteKeyword(keyword.id)}
                                             className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"

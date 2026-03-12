@@ -76,6 +76,7 @@ export interface Category {
     emoji: string | null
     is_default: boolean
     sort_order: number
+    match_priority: number
     parent_id: string | null
     created_at: string
 }

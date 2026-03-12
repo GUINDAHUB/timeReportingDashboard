@@ -178,54 +178,87 @@ export default function ImportPage() {
     }
 
     async function loadImportHistory() {
-        // Get grouped data by month/year
-        const { data, error } = await supabase
-            .from('time_entries')
-            .select('date, created_at')
-            .order('date', { ascending: false })
+        // Queremos un histórico consistente con la vista de detalle:
+        // contar SIEMPRE todos los registros por mes/año usando el mismo rango [startDate, endDate)
+        // y sin depender de límites de filas de Supabase.
 
-        if (error) {
-            console.error('Error loading history:', error)
+        // 1) Obtener la fecha mínima y máxima presentes en time_entries
+        const { data: firstEntry, error: firstError } = await supabase
+            .from('time_entries')
+            .select('date')
+            .order('date', { ascending: true })
+            .limit(1)
+            .maybeSingle()
+
+        const { data: lastEntry, error: lastError } = await supabase
+            .from('time_entries')
+            .select('date')
+            .order('date', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+        if (firstError || lastError) {
+            console.error('Error loading history date bounds:', firstError || lastError)
             return
         }
 
-        if (!data || data.length === 0) {
+        if (!firstEntry || !lastEntry) {
             setHistory([])
             return
         }
 
-        // Group by month/year
-        const grouped = new Map<string, { count: number; latestImport: string }>()
+        const minDateStr = firstEntry.date as string
+        const maxDateStr = lastEntry.date as string
 
-        data.forEach(entry => {
-            const date = new Date(entry.date)
-            const key = `${date.getFullYear()}-${date.getMonth() + 1}`
+        const minYear = parseInt(minDateStr.slice(0, 4), 10)
+        const minMonth = parseInt(minDateStr.slice(5, 7), 10)
+        const maxYear = parseInt(maxDateStr.slice(0, 4), 10)
+        const maxMonth = parseInt(maxDateStr.slice(5, 7), 10)
 
-            if (!grouped.has(key)) {
-                grouped.set(key, { count: 0, latestImport: entry.created_at })
+        // 2) Recorrer mes a mes desde min hasta max y contar registros
+        const historyArray: ImportHistory[] = []
+
+        let year = minYear
+        let month = minMonth
+
+        while (year < maxYear || (year === maxYear && month <= maxMonth)) {
+            const startDate = `${year}-${month.toString().padStart(2, '0')}-01`
+            const isDecember = month === 12
+            const nextMonth = isDecember ? 1 : month + 1
+            const nextYear = isDecember ? year + 1 : year
+            const endDate = `${nextYear}-${nextMonth.toString().padStart(2, '0')}-01`
+
+            // Para cada mes, obtenemos el count exacto y la última fecha de creación
+            const { data, count, error } = await supabase
+                .from('time_entries')
+                .select('created_at', { count: 'exact', head: false })
+                .gte('date', startDate)
+                .lt('date', endDate)
+                .order('created_at', { ascending: false })
+                .limit(1)
+
+            if (error) {
+                console.error(`Error loading history for ${month}/${year}:`, error)
+            } else if (count && count > 0 && data && data.length > 0) {
+                historyArray.push({
+                    id: `${year}-${month}`,
+                    month,
+                    year,
+                    importDate: data[0].created_at,
+                    entriesCount: count,
+                })
             }
 
-            const group = grouped.get(key)!
-            group.count++
-
-            if (entry.created_at > group.latestImport) {
-                group.latestImport = entry.created_at
+            // Avanzar al siguiente mes
+            if (isDecember) {
+                year += 1
+                month = 1
+            } else {
+                month += 1
             }
-        })
+        }
 
-        // Convert to array
-        const historyArray: ImportHistory[] = Array.from(grouped.entries()).map(([key, value]) => {
-            const [year, month] = key.split('-').map(Number)
-            return {
-                id: key,
-                month,
-                year,
-                importDate: value.latestImport,
-                entriesCount: value.count,
-            }
-        })
-
-        // Sort by year/month desc
+        // Ordenar por año/mes desc
         historyArray.sort((a, b) => {
             if (a.year !== b.year) return b.year - a.year
             return b.month - a.month

@@ -15,6 +15,7 @@ interface CategoryFormModalProps {
         emoji: string
         parent_id?: string | null
         sort_order?: number
+        match_priority?: number
     }) => Promise<void>
     category?: CategoryHierarchical | null
     parentCategories: CategoryHierarchical[]
@@ -54,6 +55,7 @@ export function CategoryFormModal({
     const [color, setColor] = useState('#10b981')
     const [emoji, setEmoji] = useState('📁')
     const [selectedParentId, setSelectedParentId] = useState<string | null>(null)
+    const [matchPriority, setMatchPriority] = useState<number>(0)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     useEffect(() => {
@@ -63,18 +65,21 @@ export function CategoryFormModal({
             setColor(category.color)
             setEmoji(category.emoji || '📁')
             setSelectedParentId(category.parent_id || null)
+            setMatchPriority((category as any).match_priority ?? 0)
         } else if (mode === 'create-child' && parentId) {
             setName('')
             setDescription('')
             setColor('#10b981')
             setEmoji('📁')
             setSelectedParentId(parentId)
+            setMatchPriority(0)
         } else {
             setName('')
             setDescription('')
             setColor('#10b981')
             setEmoji('📁')
             setSelectedParentId(null)
+            setMatchPriority(0)
         }
     }, [category, mode, parentId])
 
@@ -90,7 +95,8 @@ export function CategoryFormModal({
                 color,
                 emoji,
                 parent_id: selectedParentId,
-                sort_order: category?.sort_order
+                sort_order: category?.sort_order,
+                match_priority: matchPriority
             })
             onClose()
         } catch (error) {
@@ -230,6 +236,24 @@ export function CategoryFormModal({
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-2xl text-center"
                             maxLength={2}
                             placeholder="📁"
+                        />
+                    </div>
+
+                    {/* Match priority */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Prioridad de auto-categorización
+                        </label>
+                        <p className="text-xs text-gray-500 mb-2">
+                            Cuanto <span className="font-semibold">mayor</span> sea el número, más probabilidad de que
+                            esta subcategoría gane cuando varias coinciden con la misma tarea. Solo se aplica a
+                            <span className="font-semibold"> subcategorías</span>.
+                        </p>
+                        <input
+                            type="number"
+                            value={matchPriority}
+                            onChange={(e) => setMatchPriority(parseInt(e.target.value || '0', 10))}
+                            className="w-32 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                         />
                     </div>
 

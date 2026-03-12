@@ -77,40 +77,74 @@ export async function categorizeTask(
     const data = await loadCategorizationData()
     const normalizedTaskName = taskName.toLowerCase().trim()
 
+    // Prioridad a nivel de categoría hija (no por keyword):
+    // usamos match_priority de la categoría como prioridad.
+    const categoryPriority = new Map<string, number>()
+    data.categories
+        .filter(c => c.parent_id) // solo hijas
+        .forEach((cat, index) => {
+            // Si no tiene match_priority, usamos el índice como fallback
+            categoryPriority.set(
+                cat.id,
+                typeof (cat as any).match_priority === 'number' ? (cat as any).match_priority : index
+            )
+        })
+
     // Tokenizar el nombre de la tarea en palabras (letras/números, ignorando signos)
     const taskTokens = normalizedTaskName
         .split(/[^a-z0-9áéíóúüñ]+/i)
         .filter(Boolean)
 
-    // Find matching keywords (sorted by priority, highest first)
-    // Only check child categories (those with parent_id)
-    for (const keyword of data.keywords) {
-        const rawKeyword = keyword.word || ''
-        const normalizedKeyword = rawKeyword.toLowerCase().trim()
+    // Construimos estructura de keywords con prioridad heredada de la categoría hija
+    const keywordsInfo: Array<{
+        normalized: string
+        isPhrase: boolean
+        category_id: string
+        priority: number
+        word: string
+    }> = []
 
-        if (!normalizedKeyword) continue
+    data.keywords.forEach(kw => {
+        const category = data.categories.find(c => c.id === kw.category_id)
+        if (category && category.parent_id) {
+            const normalized = (kw.word || '').toLowerCase().trim()
+            if (!normalized) return
 
-        const isPhrase = normalizedKeyword.includes(' ')
+            keywordsInfo.push({
+                normalized,
+                isPhrase: normalized.includes(' '),
+                category_id: kw.category_id,
+                priority: categoryPriority.get(kw.category_id) ?? 0,
+                word: kw.word
+            })
+        }
+    })
+
+    let matchedCategory: { category_id: string; keyword_matched: string } | null = null
+    let highestPriority = -1
+
+    // Buscar coincidencias y quedarnos con la categoría hija de mayor prioridad
+    for (const info of keywordsInfo) {
         let matches = false
 
-        if (isPhrase) {
-            // Para frases, mantenemos búsqueda por substring
-            matches = normalizedTaskName.includes(normalizedKeyword)
+        if (info.isPhrase) {
+            matches = normalizedTaskName.includes(info.normalized)
         } else {
-            // Para palabras sueltas, solo match si coincide con un token completo
-            matches = taskTokens.includes(normalizedKeyword)
+            matches = taskTokens.includes(info.normalized)
         }
 
-        if (matches) {
-            // Verify this category is a child category (not a parent)
-            const category = data.categories.find(c => c.id === keyword.category_id)
-            if (category && category.parent_id) {
-                return {
-                    category_id: keyword.category_id,
-                    keyword_matched: rawKeyword
-                }
+        if (matches && info.priority > highestPriority) {
+            highestPriority = info.priority
+
+            matchedCategory = {
+                category_id: info.category_id,
+                keyword_matched: info.word
             }
         }
+    }
+
+    if (matchedCategory) {
+        return matchedCategory
     }
 
     // No match found, return null (will be assigned "Sin Clasificar" by caller)
@@ -142,6 +176,18 @@ export async function categorizeTasks(
     const data = await loadCategorizationData()
     const results = new Map<string, { category_id: string | null; keyword_matched: string | null }>()
 
+    // Prioridad a nivel de categoría hija (no por keyword):
+    // usamos match_priority de la categoría como prioridad.
+    const categoryPriority = new Map<string, number>()
+    data.categories
+        .filter(c => c.parent_id) // solo hijas
+        .forEach((cat, index) => {
+            categoryPriority.set(
+                cat.id,
+                typeof (cat as any).match_priority === 'number' ? (cat as any).match_priority : index
+            )
+        })
+
     // Create a list of keywords with category info, only for child categories
     const keywordsInfo: Array<{
         normalized: string
@@ -161,7 +207,7 @@ export async function categorizeTasks(
                 normalized,
                 isPhrase: normalized.includes(' '),
                 category_id: kw.category_id,
-                priority: kw.priority,
+                priority: categoryPriority.get(kw.category_id) ?? 0,
                 word: kw.word
             })
         }

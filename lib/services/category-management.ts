@@ -18,6 +18,7 @@ export async function createCategory(category: {
     emoji?: string
     parent_id?: string | null
     sort_order?: number
+    match_priority?: number
 }): Promise<Category> {
     const { data, error } = await supabase
         .from('categories')
@@ -28,6 +29,7 @@ export async function createCategory(category: {
             emoji: category.emoji || null,
             parent_id: category.parent_id || null,
             sort_order: category.sort_order || 0,
+            match_priority: category.match_priority ?? 0,
             is_default: false
         })
         .select()
@@ -51,6 +53,7 @@ export async function updateCategory(
         emoji?: string
         sort_order?: number
         parent_id?: string | null
+        match_priority?: number
     }
 ): Promise<Category> {
     const { data, error } = await supabase
