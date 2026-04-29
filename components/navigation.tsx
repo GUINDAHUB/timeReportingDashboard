@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 const navItems = [
     { href: '/', label: 'Inicio', icon: '🏠' },
     { href: '/dashboard', label: 'Dashboard', icon: '📊' },
+    { href: '/informes', label: 'Informes', icon: '📝' },
     { href: '/trends', label: 'Tendencias', icon: '📈' },
     { 
         label: 'Categorización', 

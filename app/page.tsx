@@ -12,7 +12,7 @@ export default function HomePage() {
                     Sistema de análisis de rentabilidad para tu agencia de marketing
                 </p>
 
-                <div className="grid gap-6 md:grid-cols-3 mt-12 max-w-5xl mx-auto">
+                <div className="grid gap-6 md:grid-cols-4 mt-12 max-w-6xl mx-auto">
                     <Link
                         href="/dashboard"
                         className="group p-8 rounded-xl border-2 bg-white hover:bg-blue-50 border-blue-200 hover:border-blue-400 shadow-sm hover:shadow-lg transition-all cursor-pointer"
@@ -43,6 +43,17 @@ export default function HomePage() {
                         <h3 className="text-2xl font-bold mb-3 text-gray-900 group-hover:text-green-700">Importar CSV</h3>
                         <p className="text-gray-600 group-hover:text-gray-800">
                             Carga tus datos mensuales de ClickUp
+                        </p>
+                    </Link>
+
+                    <Link
+                        href="/informes"
+                        className="group p-8 rounded-xl border-2 bg-white hover:bg-amber-50 border-amber-200 hover:border-amber-400 shadow-sm hover:shadow-lg transition-all cursor-pointer"
+                    >
+                        <div className="text-5xl mb-4">📝</div>
+                        <h3 className="text-2xl font-bold mb-3 text-gray-900 group-hover:text-amber-700">Informes</h3>
+                        <p className="text-gray-600 group-hover:text-gray-800">
+                            Genera análisis semanales con IA y detecta entradas dudosas
                         </p>
                     </Link>
                 </div>
@@ -79,6 +90,13 @@ export default function HomePage() {
                             <div>
                                 <h4 className="font-semibold text-gray-900">Analizar Tendencias</h4>
                                 <p className="text-sm text-gray-600">Revisa <Link href="/trends" className="text-blue-600 hover:underline">evolución temporal</Link></p>
+                            </div>
+                        </div>
+                        <div className="flex items-start space-x-3">
+                            <span className="text-2xl">📝</span>
+                            <div>
+                                <h4 className="font-semibold text-gray-900">Crear Informes IA</h4>
+                                <p className="text-sm text-gray-600">Genera reportes en <Link href="/informes" className="text-blue-600 hover:underline">Informes</Link></p>
                             </div>
                         </div>
                     </div>
