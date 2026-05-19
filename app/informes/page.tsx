@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Download, FileText, Send, Sparkles, TriangleAlert } from 'lucide-react'
+import { Download, FileText, Send, Sparkles, Trash2, TriangleAlert } from 'lucide-react'
+import { WeekSelector } from '@/components/informes/week-selector'
 
 interface WeeklyReportMeta {
     startDate: string
@@ -27,6 +28,24 @@ interface SavedWeeklyReport {
     meta?: WeeklyReportMeta
 }
 
+function getDefaultPreviousWeekStart(): string {
+    const today = new Date()
+    const utcNow = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()))
+    const day = utcNow.getUTCDay()
+    const daysSinceMonday = (day + 6) % 7
+    utcNow.setUTCDate(utcNow.getUTCDate() - daysSinceMonday - 7)
+    return utcNow.toISOString().slice(0, 10)
+}
+
+function mondayOfWeekISO(dateISO: string): string {
+    const [y, m, d] = dateISO.split('-').map(Number)
+    const date = new Date(Date.UTC(y, (m || 1) - 1, d || 1))
+    const day = date.getUTCDay()
+    const daysSinceMonday = (day + 6) % 7
+    date.setUTCDate(date.getUTCDate() - daysSinceMonday)
+    return date.toISOString().slice(0, 10)
+}
+
 export default function InformesPage() {
     const [loading, setLoading] = useState(false)
     const [report, setReport] = useState('')
@@ -38,6 +57,9 @@ export default function InformesPage() {
     const [shareMessage, setShareMessage] = useState('')
     const [savedReports, setSavedReports] = useState<SavedWeeklyReport[]>([])
     const [loadingSavedReports, setLoadingSavedReports] = useState(false)
+    const [weekStart, setWeekStart] = useState<string | null>(null)
+    const [latestDataDate, setLatestDataDate] = useState<string | null>(null)
+    const [deletingId, setDeletingId] = useState<string | null>(null)
 
     const weekLabel = useMemo(() => {
         if (!meta) return ''
@@ -57,6 +79,14 @@ export default function InformesPage() {
                 const data = await response.json()
                 if (!cancelled && response.ok && data?.success) {
                     setSavedReports(data.reports || [])
+                    if (data.latestDataDate) {
+                        setLatestDataDate(data.latestDataDate)
+                    }
+                    setWeekStart((current) => {
+                        if (current) return current
+                        if (data.latestDataDate) return mondayOfWeekISO(data.latestDataDate)
+                        return getDefaultPreviousWeekStart()
+                    })
                 }
             } finally {
                 if (!cancelled) setLoadingSavedReports(false)
@@ -69,6 +99,7 @@ export default function InformesPage() {
     }, [])
 
     async function handleGenerateReport() {
+        if (!weekStart) return
         setLoading(true)
         setError('')
         setShareMessage('')
@@ -76,6 +107,8 @@ export default function InformesPage() {
         try {
             const response = await fetch('/api/reports/weekly', {
                 method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ startDate: weekStart }),
             })
 
             const data = await response.json()
@@ -168,6 +201,33 @@ export default function InformesPage() {
         setShareMessage('Informe guardado cargado correctamente.')
     }
 
+    async function handleDeleteSavedReport(savedReport: SavedWeeklyReport) {
+        const confirmed = window.confirm(
+            `¿Eliminar el informe de la semana "${savedReport.weekLabel}"? Esta acción no se puede deshacer.`
+        )
+        if (!confirmed) return
+
+        setDeletingId(savedReport.id)
+        setError('')
+        setShareMessage('')
+
+        try {
+            const response = await fetch(
+                `/api/reports/weekly?id=${encodeURIComponent(savedReport.id)}`,
+                { method: 'DELETE' }
+            )
+            const data = await response.json().catch(() => null)
+            if (!response.ok || !data?.success) {
+                throw new Error(data?.error || 'No se pudo eliminar el informe')
+            }
+            setSavedReports((prev) => prev.filter((r) => r.id !== savedReport.id))
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Error eliminando el informe')
+        } finally {
+            setDeletingId(null)
+        }
+    }
+
     return (
         <div className="container mx-auto px-4 py-8">
             <div className="space-y-6">
@@ -175,18 +235,36 @@ export default function InformesPage() {
                     <div>
                         <h1 className="text-3xl font-bold text-gray-900">Informes</h1>
                         <p className="text-gray-600 mt-1">
-                            Genera un informe automático de la semana anterior con Claude.
+                            Genera un informe automático de la semana seleccionada con Claude.
                         </p>
                     </div>
-                    <Button onClick={handleGenerateReport} disabled={loading}>
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        {loading ? 'Generando informe...' : 'Generar informe semanal'}
-                    </Button>
+                    <div className="flex items-center gap-3 flex-wrap">
+                        {weekStart ? (
+                            <WeekSelector
+                                weekStart={weekStart}
+                                onWeekChange={setWeekStart}
+                                latestDataDate={latestDataDate}
+                            />
+                        ) : (
+                            <div className="text-sm text-gray-500 px-4 py-2 bg-white border rounded-lg shadow-sm">
+                                Cargando semana...
+                            </div>
+                        )}
+                        <Button onClick={handleGenerateReport} disabled={loading || !weekStart}>
+                            <Sparkles className="w-4 h-4 mr-2" />
+                            {loading ? 'Generando informe...' : 'Generar informe semanal'}
+                        </Button>
+                    </div>
                 </div>
 
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-900">
-                    Se envían entradas de tiempo compactadas de la semana anterior (sin categoría), junto con
+                    Se envían entradas de tiempo compactadas de la semana seleccionada (sin categoría), junto con
                     empleados y clientes, para reducir tokens y delegar la categorización al LLM.
+                    {latestDataDate && (
+                        <span className="block mt-1 text-blue-800/80">
+                            Último dato disponible en tu base: <strong>{latestDataDate}</strong>.
+                        </span>
+                    )}
                 </div>
 
                 <div className="bg-white border rounded-xl p-4">
@@ -212,9 +290,21 @@ export default function InformesPage() {
                                             {savedReport.model ? ` · ${savedReport.model}` : ''}
                                         </p>
                                     </div>
-                                    <Button variant="outline" onClick={() => handleLoadSavedReport(savedReport)}>
-                                        Cargar
-                                    </Button>
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="outline" onClick={() => handleLoadSavedReport(savedReport)}>
+                                            Cargar
+                                        </Button>
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => handleDeleteSavedReport(savedReport)}
+                                            disabled={deletingId === savedReport.id}
+                                            className="text-red-600 hover:bg-red-50 hover:text-red-700 border-red-200"
+                                            title="Eliminar informe"
+                                        >
+                                            <Trash2 className="w-4 h-4 mr-1" />
+                                            {deletingId === savedReport.id ? 'Eliminando...' : 'Eliminar'}
+                                        </Button>
+                                    </div>
                                 </div>
                             ))}
                         </div>

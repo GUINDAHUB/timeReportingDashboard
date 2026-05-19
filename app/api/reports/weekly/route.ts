@@ -3,9 +3,12 @@ import { createServerClient } from '@/lib/supabase/server'
 import {
     WEEKLY_REPORT_SYSTEM_PROMPT,
     buildWeeklyReportUserPrompt,
-    WeeklyReportPromptPayload,
+    parseWeeklyReportNarrative,
+    narrativeToMarkdown,
+    WeeklyReportNarrative,
 } from '@/lib/reports/weekly-report-prompt'
 import { buildWeeklyReportHtml } from '@/lib/reports/weekly-report-html'
+import { computeWeeklyReportData, RawTimeEntry, WeeklyReportData } from '@/lib/reports/weekly-report-data'
 
 interface TimeEntryRow {
     id: string
@@ -43,6 +46,20 @@ function getPreviousWeekRange(today = new Date()) {
     return {
         startDate: startOfPreviousWeek.toISOString().slice(0, 10),
         endDateExclusive: startOfCurrentWeek.toISOString().slice(0, 10),
+    }
+}
+
+function isValidISODate(value: unknown): value is string {
+    return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value))
+}
+
+function weekRangeFromStart(startDate: string) {
+    const start = new Date(`${startDate}T00:00:00Z`)
+    const end = new Date(start)
+    end.setUTCDate(start.getUTCDate() + 7)
+    return {
+        startDate,
+        endDateExclusive: end.toISOString().slice(0, 10),
     }
 }
 
@@ -152,11 +169,26 @@ async function callClaude(systemPrompt: string, userPrompt: string) {
     throw new Error(lastError || 'No se encontró un modelo Claude compatible')
 }
 
-export async function POST() {
+export async function POST(request: Request) {
     const supabase = createServerClient()
 
     try {
-        const { startDate, endDateExclusive } = getPreviousWeekRange()
+        let requestedStartDate: string | null = null
+        try {
+            const contentType = request.headers.get('content-type') || ''
+            if (contentType.includes('application/json')) {
+                const body = await request.json().catch(() => null)
+                if (body && isValidISODate(body.startDate)) {
+                    requestedStartDate = body.startDate
+                }
+            }
+        } catch {
+            // ignoramos cuerpo inválido y caemos al rango por defecto
+        }
+
+        const { startDate, endDateExclusive } = requestedStartDate
+            ? weekRangeFromStart(requestedStartDate)
+            : getPreviousWeekRange()
 
         const { data: entries, error } = await supabase
             .from('time_entries')
@@ -175,35 +207,47 @@ export async function POST() {
         }
 
         const typedEntries = (entries || []) as TimeEntryRow[]
+        const weekLabel = `${startDate} - ${new Date(
+            new Date(endDateExclusive).getTime() - 24 * 60 * 60 * 1000
+        )
+            .toISOString()
+            .slice(0, 10)}`
 
-        if (typedEntries.length === 0) {
-            const emptyPayload: WeeklyReportPromptPayload = {
-                weekLabel: `${startDate} - ${new Date(
-                    new Date(endDateExclusive).getTime() - 24 * 60 * 60 * 1000
-                )
-                    .toISOString()
-                    .slice(0, 10)}`,
-                startDate,
-                endDateExclusive,
-                totalEntries: 0,
-                totalHours: 0,
-                employees: [],
-                clients: [],
-                employeeHours: [],
-                clientHours: [],
-                entriesCompact: [],
+        const rawEntries: RawTimeEntry[] = typedEntries.map((entry) => ({
+            id: entry.id,
+            task_name: entry.task_name,
+            duration_hours: toNumber(entry.duration_hours),
+            date: entry.date,
+            employee_name: entry.employee_name,
+            client_name: getClientName(entry),
+        }))
+
+        const reportData: WeeklyReportData = computeWeeklyReportData({
+            entries: rawEntries,
+            startDate,
+            endDateExclusive,
+            weekLabel,
+        })
+
+        if (reportData.totalEntries === 0) {
+            const emptyNarrative: WeeklyReportNarrative = {
+                highlights: ['No hay entradas registradas en este rango.'],
+                clientObservations: ['Sin datos de clientes en esta semana.'],
+                employeeObservations: ['Sin datos de empleados en esta semana.'],
+                doubtfulAnalysis: ['Sin entradas que revisar en este rango.'],
             }
-            const emptyReport = '## Informe semanal\n\nNo hay entradas de tiempo para la semana anterior.'
             const emptyHtml = buildWeeklyReportHtml({
-                reportMarkdown: emptyReport,
-                payload: emptyPayload,
+                data: reportData,
+                narrative: emptyNarrative,
                 generatedAtIso: new Date().toISOString(),
+                modelName: null,
             })
+            const emptyMarkdown = narrativeToMarkdown(emptyNarrative, reportData)
             await supabase.from('weekly_reports').insert({
                 week_start: startDate,
                 week_end_exclusive: endDateExclusive,
-                week_label: emptyPayload.weekLabel,
-                report_markdown: emptyReport,
+                week_label: weekLabel,
+                report_markdown: emptyMarkdown,
                 report_html: emptyHtml,
                 model: null,
                 meta: {
@@ -215,7 +259,7 @@ export async function POST() {
             })
             return NextResponse.json({
                 success: true,
-                report: emptyReport,
+                report: emptyMarkdown,
                 reportHtml: emptyHtml,
                 reportFileName: `informe-semanal-${startDate}.html`,
                 meta: {
@@ -227,76 +271,32 @@ export async function POST() {
             })
         }
 
-        const employeeStats = new Map<string, { hours: number; entries: number }>()
-        const clientStats = new Map<string, { hours: number; entries: number }>()
-
-        const entriesCompact: WeeklyReportPromptPayload['entriesCompact'] = typedEntries.map((entry) => {
-            const hours = toNumber(entry.duration_hours)
-            const clientName = getClientName(entry)
-
-            const emp = employeeStats.get(entry.employee_name) || { hours: 0, entries: 0 }
-            emp.hours += hours
-            emp.entries += 1
-            employeeStats.set(entry.employee_name, emp)
-
-            const cli = clientStats.get(clientName) || { hours: 0, entries: 0 }
-            cli.hours += hours
-            cli.entries += 1
-            clientStats.set(clientName, cli)
-
-            return [entry.employee_name, entry.date, Number(hours.toFixed(2)), clientName, entry.task_name]
-        })
-
-        const totalHours = entriesCompact.reduce((sum, entry) => sum + entry[2], 0)
-
-        const payload: WeeklyReportPromptPayload = {
-            weekLabel: `${startDate} - ${new Date(
-                new Date(endDateExclusive).getTime() - 24 * 60 * 60 * 1000
-            )
-                .toISOString()
-                .slice(0, 10)}`,
-            startDate,
-            endDateExclusive,
-            totalEntries: typedEntries.length,
-            totalHours: Number(totalHours.toFixed(2)),
-            employees: Array.from(employeeStats.keys()).sort(),
-            clients: Array.from(clientStats.keys()).sort(),
-            employeeHours: Array.from(employeeStats.entries())
-                .map(([employee_name, v]) => ({
-                    employee_name,
-                    total_hours: Number(v.hours.toFixed(2)),
-                    entries_count: v.entries,
-                }))
-                .sort((a, b) => b.total_hours - a.total_hours),
-            clientHours: Array.from(clientStats.entries())
-                .map(([client_name, v]) => ({
-                    client_name,
-                    total_hours: Number(v.hours.toFixed(2)),
-                    entries_count: v.entries,
-                }))
-                .sort((a, b) => b.total_hours - a.total_hours),
-            entriesCompact,
-        }
-
-        const userPrompt = buildWeeklyReportUserPrompt(payload)
+        const userPrompt = buildWeeklyReportUserPrompt(reportData)
         const claudeResult = await callClaude(WEEKLY_REPORT_SYSTEM_PROMPT, userPrompt)
+        const narrative = parseWeeklyReportNarrative(claudeResult.reportText)
         const reportHtml = buildWeeklyReportHtml({
-            reportMarkdown: claudeResult.reportText,
-            payload,
+            data: reportData,
+            narrative,
             generatedAtIso: new Date().toISOString(),
+            modelName: claudeResult.model,
         })
+        const reportMarkdown = narrativeToMarkdown(narrative, reportData)
         await supabase.from('weekly_reports').insert({
             week_start: startDate,
             week_end_exclusive: endDateExclusive,
-            week_label: payload.weekLabel,
-            report_markdown: claudeResult.reportText,
+            week_label: weekLabel,
+            report_markdown: reportMarkdown,
             report_html: reportHtml,
             model: claudeResult.model,
             meta: {
                 startDate,
                 endDateExclusive,
-                totalEntries: payload.totalEntries,
-                totalHours: payload.totalHours,
+                totalEntries: reportData.totalEntries,
+                totalHours: reportData.totalHours,
+                distinctEmployees: reportData.distinctEmployees,
+                distinctClients: reportData.distinctClients,
+                longEntries: reportData.longEntries.length,
+                sharedTasks: reportData.sharedTasks.length,
                 model: claudeResult.model,
                 usage: claudeResult.usage,
             },
@@ -304,14 +304,18 @@ export async function POST() {
 
         return NextResponse.json({
             success: true,
-            report: claudeResult.reportText,
+            report: reportMarkdown,
             reportHtml,
             reportFileName: `informe-semanal-${startDate}.html`,
             meta: {
                 startDate,
                 endDateExclusive,
-                totalEntries: payload.totalEntries,
-                totalHours: payload.totalHours,
+                totalEntries: reportData.totalEntries,
+                totalHours: reportData.totalHours,
+                distinctEmployees: reportData.distinctEmployees,
+                distinctClients: reportData.distinctClients,
+                longEntries: reportData.longEntries.length,
+                sharedTasks: reportData.sharedTasks.length,
                 model: claudeResult.model,
                 usage: claudeResult.usage,
             },
@@ -352,11 +356,53 @@ export async function GET() {
             meta: row.meta || {},
         }))
 
-        return NextResponse.json({ success: true, reports })
+        const { data: latest } = await supabase
+            .from('time_entries')
+            .select('date')
+            .order('date', { ascending: false })
+            .limit(1)
+        const latestDataDate = latest?.[0]?.date || null
+
+        return NextResponse.json({ success: true, reports, latestDataDate })
     } catch (err) {
         return NextResponse.json(
             {
                 error: 'Error cargando histórico de informes',
+                details: err instanceof Error ? err.message : 'Unknown error',
+            },
+            { status: 500 }
+        )
+    }
+}
+
+export async function DELETE(request: Request) {
+    const supabase = createServerClient()
+    try {
+        const { searchParams } = new URL(request.url)
+        const id = searchParams.get('id')
+
+        if (!id) {
+            return NextResponse.json({ error: 'Falta el parámetro id' }, { status: 400 })
+        }
+
+        const { error, count } = await supabase
+            .from('weekly_reports')
+            .delete({ count: 'exact' })
+            .eq('id', id)
+
+        if (error) {
+            return NextResponse.json({ error: error.message }, { status: 500 })
+        }
+
+        if (!count) {
+            return NextResponse.json({ error: 'Informe no encontrado' }, { status: 404 })
+        }
+
+        return NextResponse.json({ success: true })
+    } catch (err) {
+        return NextResponse.json(
+            {
+                error: 'Error eliminando el informe',
                 details: err instanceof Error ? err.message : 'Unknown error',
             },
             { status: 500 }
